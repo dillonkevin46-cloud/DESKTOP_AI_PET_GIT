@@ -11,7 +11,7 @@ import os
 from dataclasses import dataclass
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QLabel, QMenu, QSystemTrayIcon, QVBoxLayout,
-    QTextEdit, QLineEdit
+    QTextEdit, QLineEdit, QDialog, QFormLayout, QDialogButtonBox
 )
 from PyQt6.QtCore import Qt, QTimer, QPoint, QRect, QThread, pyqtSignal, QPropertyAnimation
 from PyQt6.QtGui import QPixmap, QAction, QIcon, QGuiApplication, QMovie
@@ -20,6 +20,72 @@ from database import init_db, ChatHistory, MemoryTraits
 
 # Initialize the global sessionmaker
 SessionLocal = init_db()
+
+DEFAULT_CONFIG = {
+    "ollama_url": "http://localhost:11434",
+    "chat_model": "llama3",
+    "vision_model": "llava",
+    "pet_name": "Pet",
+    "user_name": "User"
+}
+
+def load_settings():
+    if not os.path.exists("settings.json"):
+        return DEFAULT_CONFIG.copy()
+    try:
+        with open("settings.json", "r") as f:
+            config = json.load(f)
+            # Ensure all default keys exist
+            for k, v in DEFAULT_CONFIG.items():
+                if k not in config:
+                    config[k] = v
+            return config
+    except Exception as e:
+        print(f"Error loading settings: {e}")
+        return DEFAULT_CONFIG.copy()
+
+def save_settings(config):
+    try:
+        with open("settings.json", "w") as f:
+            json.dump(config, f, indent=4)
+    except Exception as e:
+        print(f"Error saving settings: {e}")
+
+class SettingsDialog(QDialog):
+    def __init__(self, config: dict, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("AI Pet Settings")
+        self.config = config
+
+        self.layout = QFormLayout(self)
+
+        self.ollama_url_input = QLineEdit(self.config.get("ollama_url", ""))
+        self.chat_model_input = QLineEdit(self.config.get("chat_model", ""))
+        self.vision_model_input = QLineEdit(self.config.get("vision_model", ""))
+        self.pet_name_input = QLineEdit(self.config.get("pet_name", ""))
+        self.user_name_input = QLineEdit(self.config.get("user_name", ""))
+
+        self.layout.addRow("Ollama API URL:", self.ollama_url_input)
+        self.layout.addRow("Chat Model:", self.chat_model_input)
+        self.layout.addRow("Vision Model:", self.vision_model_input)
+        self.layout.addRow("Pet Name:", self.pet_name_input)
+        self.layout.addRow("User Name:", self.user_name_input)
+
+        self.button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
+        self.button_box.accepted.connect(self.save_and_accept)
+        self.button_box.rejected.connect(self.reject)
+
+        self.layout.addWidget(self.button_box)
+
+    def save_and_accept(self):
+        self.config["ollama_url"] = self.ollama_url_input.text().strip()
+        self.config["chat_model"] = self.chat_model_input.text().strip()
+        self.config["vision_model"] = self.vision_model_input.text().strip()
+        self.config["pet_name"] = self.pet_name_input.text().strip()
+        self.config["user_name"] = self.user_name_input.text().strip()
+
+        save_settings(self.config)
+        self.accept()
 
 @dataclass
 class PetState:
@@ -64,12 +130,13 @@ class AIBrainWorker(QThread):
     response_ready = pyqtSignal(str)
     error_occurred = pyqtSignal(str)
 
-    def __init__(self, user_message: str, pet_state: PetState, history_limit: int = 5):
+    def __init__(self, user_message: str, pet_state: PetState, config: dict, history_limit: int = 5):
         super().__init__()
         self.user_message = user_message
         self.pet_state = pet_state
+        self.config = config
         self.history_limit = history_limit
-        self.url = "http://localhost:11434/api/chat"
+        self.url = f"{self.config.get('ollama_url').rstrip('/')}/api/chat"
 
     def run(self):
         asyncio.run(self.process_message())
@@ -84,7 +151,7 @@ class AIBrainWorker(QThread):
         self._save_to_db("user", self.user_message)
 
         payload = {
-            "model": "llama3", # Change to whatever model you use
+            "model": self.config.get("chat_model"),
             "messages": messages,
             "stream": False
         }
@@ -108,10 +175,13 @@ class AIBrainWorker(QThread):
             self.error_occurred.emit(f"Unexpected Brain error: {e}")
 
     def _build_context(self):
+        pet_name = self.config.get("pet_name", "Pet")
+        user_name = self.config.get("user_name", "User")
+
         # Base system prompt dynamically injected with current stats
         system_content = (
-            f"You are a virtual desktop pet. Your current stats are: "
-            f"Energy {self.pet_state.energy}/100, Hunger {self.pet_state.hunger}/100, "
+            f"You are a virtual desktop pet named {pet_name}. You are talking to your owner, {user_name}. "
+            f"Your current stats are: Energy {self.pet_state.energy}/100, Hunger {self.pet_state.hunger}/100, "
             f"Boredom {self.pet_state.boredom}/100, Affection {self.pet_state.affection}/100. "
             f"Act accordingly. Keep responses short and full of personality."
         )
@@ -149,15 +219,20 @@ class MemoryExtractionWorker(QThread):
     """Background thread that extracts new memory traits from recent chat history."""
     extraction_finished = pyqtSignal(str)
 
-    def __init__(self, db_sessionmaker):
+    def __init__(self, db_sessionmaker, config: dict):
         super().__init__()
         self.db_sessionmaker = db_sessionmaker
-        self.url = "http://localhost:11434/api/chat"
+        self.config = config
+        self.url = f"{self.config.get('ollama_url').rstrip('/')}/api/chat"
+
+        pet_name = self.config.get("pet_name", "pet")
+        user_name = self.config.get("user_name", "user")
+
         self.prompt = (
-            "You are a memory extraction engine. Read the chat transcript and extract 1 to 2 new, "
-            "permanent facts about the user or the pet's personality. Return strictly a JSON list "
-            "of objects with keys 'entity' (must be 'user' or 'pet') and 'trait'. Example: "
-            "[{\"entity\": \"user\", \"trait\": \"Loves Python\"}]. Do not include markdown formatting or extra text."
+            f"You are a memory extraction engine. Read the chat transcript between {pet_name} (the pet) and {user_name} (the user) "
+            f"and extract 1 to 2 new, permanent facts about the user or the pet's personality. "
+            f"Return strictly a JSON list of objects with keys 'entity' (must be '{user_name}' or '{pet_name}') and 'trait'. "
+            f"Example: [{{\"entity\": \"{user_name}\", \"trait\": \"Loves Python\"}}]. Do not include markdown formatting or extra text."
         )
 
     def run(self):
@@ -180,7 +255,7 @@ class MemoryExtractionWorker(QThread):
             return
 
         payload = {
-            "model": "llama3",
+            "model": self.config.get("chat_model"),
             "messages": [
                 {"role": "system", "content": self.prompt},
                 {"role": "user", "content": f"Here is the transcript:\n{transcript}"}
@@ -240,10 +315,15 @@ class VisionWorker(QThread):
     response_ready = pyqtSignal(str)
     error_occurred = pyqtSignal(str)
 
-    def __init__(self):
+    def __init__(self, config: dict):
         super().__init__()
-        self.url = "http://localhost:11434/api/generate"
-        self.prompt = "Briefly describe what the user is doing on their screen in one short sentence. Act as a cute desktop pet observing them."
+        self.config = config
+        self.url = f"{self.config.get('ollama_url').rstrip('/')}/api/generate"
+
+        pet_name = self.config.get("pet_name", "cute desktop pet")
+        user_name = self.config.get("user_name", "the user")
+
+        self.prompt = f"Briefly describe what {user_name} is doing on their screen in one short sentence. Act as a {pet_name} observing them."
 
     def run(self):
         asyncio.run(self.process_vision())
@@ -262,7 +342,7 @@ class VisionWorker(QThread):
                 base64_img = base64.b64encode(img_bytes).decode('utf-8')
 
             payload = {
-                "model": "llava",
+                "model": self.config.get("vision_model"),
                 "prompt": self.prompt,
                 "images": [base64_img],
                 "stream": False
@@ -290,9 +370,10 @@ class VisionWorker(QThread):
 
 class ChatWidget(QWidget):
     """Semi-transparent tool window for chatting with the pet."""
-    def __init__(self, pet_state: PetState, parent=None):
+    def __init__(self, pet_state: PetState, config: dict, parent=None):
         super().__init__(parent)
         self.pet_state = pet_state
+        self.config = config
         self.worker = None
 
         self.setWindowTitle("Chat with Pet")
@@ -321,7 +402,8 @@ class ChatWidget(QWidget):
             return
 
         self.input_field.clear()
-        self.history_display.append(f"<b>You:</b> {msg}")
+        user_name = self.config.get("user_name", "You")
+        self.history_display.append(f"<b>{user_name}:</b> {msg}")
         self.input_field.setEnabled(False) # Disable input while processing
 
         # Reset boredom to reward user interaction
@@ -330,14 +412,15 @@ class ChatWidget(QWidget):
             self.parent().autonomy_triggered = False
 
         # Spawn AIBrainWorker
-        self.worker = AIBrainWorker(msg, self.pet_state)
+        self.worker = AIBrainWorker(msg, self.pet_state, self.config)
         self.worker.response_ready.connect(self._on_response)
         self.worker.error_occurred.connect(self._on_error)
         self.worker.finished.connect(self._cleanup_worker)
         self.worker.start()
 
     def _on_response(self, response: str):
-        self.history_display.append(f"<b>Pet:</b> {response}")
+        pet_name = self.config.get("pet_name", "Pet")
+        self.history_display.append(f"<b>{pet_name}:</b> {response}")
 
     def _on_error(self, error_msg: str):
         self.history_display.append(f"<i><span style='color:red;'>System:</span> {error_msg}</i>")
@@ -355,13 +438,14 @@ class PetWindow(QWidget):
     def __init__(self, sprite_paths: dict[str, str]):
         super().__init__()
 
+        self.config = load_settings()
         self.sprite_paths = sprite_paths
         self.drag_position = QPoint()
         self.total_screen_geometry = QRect()
 
         self.state = PetState()
 
-        self.chat_widget = ChatWidget(self.state, parent=self)
+        self.chat_widget = ChatWidget(self.state, self.config, parent=self)
         self.vision_worker = None
 
         self.autonomy_triggered = False
@@ -428,7 +512,7 @@ class PetWindow(QWidget):
             return
 
         print("[DEBUG MEMORY] Starting memory extraction cycle...")
-        self.memory_worker = MemoryExtractionWorker(SessionLocal)
+        self.memory_worker = MemoryExtractionWorker(SessionLocal, self.config)
         self.memory_worker.extraction_finished.connect(lambda msg: print(f"[DEBUG MEMORY] {msg}"))
         self.memory_worker.finished.connect(self._cleanup_memory_worker)
         self.memory_worker.start()
@@ -513,6 +597,10 @@ class PetWindow(QWidget):
         force_wander_action.triggered.connect(self.wander)
         self.tray_menu.addAction(force_wander_action)
 
+        settings_action = QAction("Settings", self)
+        settings_action.triggered.connect(self.open_settings)
+        self.tray_menu.addAction(settings_action)
+
         quit_action = QAction("Quit", self)
         quit_action.triggered.connect(self.quit_app)
         self.tray_menu.addAction(quit_action)
@@ -575,11 +663,18 @@ class PetWindow(QWidget):
         else:
             self.chat_widget.show()
 
+    def open_settings(self):
+        dialog = SettingsDialog(self.config, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.config = load_settings()
+            # Update ChatWidget config reference
+            self.chat_widget.config = self.config
+
     def look_at_screen(self):
         if self.vision_worker and self.vision_worker.isRunning():
             return  # Ignore if already looking
 
-        self.vision_worker = VisionWorker()
+        self.vision_worker = VisionWorker(self.config)
         self.vision_worker.response_ready.connect(self._on_vision_response)
         self.vision_worker.error_occurred.connect(self._on_vision_error)
         self.vision_worker.finished.connect(self._cleanup_vision_worker)
@@ -591,18 +686,20 @@ class PetWindow(QWidget):
             self.vision_worker = None
 
     def _on_vision_response(self, observation: str):
+        pet_name = self.config.get("pet_name", "Pet")
         if self.vision_mode == "manual":
-            self.chat_widget.history_display.append(f"<i><b>Pet sees:</b> {observation}</i>")
+            self.chat_widget.history_display.append(f"<i><b>{pet_name} sees:</b> {observation}</i>")
         elif self.vision_mode == "autonomous":
             prompt = f"[System: You are extremely bored. You look at the user's screen and see: {observation}. Say something short, sassy, or needy to interrupt them and get their attention.]"
-            self.autonomous_worker = AIBrainWorker(prompt, self.state)
+            self.autonomous_worker = AIBrainWorker(prompt, self.state, self.config)
             self.autonomous_worker.response_ready.connect(self._on_autonomous_response)
             self.autonomous_worker.error_occurred.connect(self._on_vision_error)
             self.autonomous_worker.finished.connect(self._cleanup_autonomous_brain)
             self.autonomous_worker.start()
 
     def _on_autonomous_response(self, response: str):
-        self.chat_widget.history_display.append(f"<b>Pet:</b> {response}")
+        pet_name = self.config.get("pet_name", "Pet")
+        self.chat_widget.history_display.append(f"<b>{pet_name}:</b> {response}")
         self.chat_widget.show()
         self.vision_mode = "manual"
 
