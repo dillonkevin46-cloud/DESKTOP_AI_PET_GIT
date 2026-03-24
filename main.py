@@ -5,6 +5,8 @@ import aiohttp
 import mss
 import base64
 import random
+import json
+import re
 from dataclasses import dataclass
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QLabel, QMenu, QSystemTrayIcon, QVBoxLayout,
@@ -141,6 +143,96 @@ class AIBrainWorker(QThread):
                     db.commit()
             except Exception as e:
                 print(f"Failed to save {role} message to DB: {e}")
+
+class MemoryExtractionWorker(QThread):
+    """Background thread that extracts new memory traits from recent chat history."""
+    extraction_finished = pyqtSignal(str)
+
+    def __init__(self, db_sessionmaker):
+        super().__init__()
+        self.db_sessionmaker = db_sessionmaker
+        self.url = "http://localhost:11434/api/chat"
+        self.prompt = (
+            "You are a memory extraction engine. Read the chat transcript and extract 1 to 2 new, "
+            "permanent facts about the user or the pet's personality. Return strictly a JSON list "
+            "of objects with keys 'entity' (must be 'user' or 'pet') and 'trait'. Example: "
+            "[{\"entity\": \"user\", \"trait\": \"Loves Python\"}]. Do not include markdown formatting or extra text."
+        )
+
+    def run(self):
+        if not self.db_sessionmaker:
+            self.extraction_finished.emit("Extraction aborted: No DB sessionmaker.")
+            return
+        asyncio.run(self.process_extraction())
+
+    async def process_extraction(self):
+        try:
+            with self.db_sessionmaker() as db:
+                history = db.query(ChatHistory).order_by(ChatHistory.timestamp.desc()).limit(10).all()
+                if len(history) < 2:
+                    self.extraction_finished.emit("Extraction aborted: Not enough chat history.")
+                    return
+
+                transcript = "\n".join([f"{msg.role}: {msg.content}" for msg in reversed(history)])
+        except Exception as e:
+            self.extraction_finished.emit(f"Extraction failed during DB read: {e}")
+            return
+
+        payload = {
+            "model": "llama3",
+            "messages": [
+                {"role": "system", "content": self.prompt},
+                {"role": "user", "content": f"Here is the transcript:\n{transcript}"}
+            ],
+            "stream": False
+        }
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(self.url, json=payload, timeout=45) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        llm_reply = data.get("message", {}).get("content", "").strip()
+                        self._parse_and_save(llm_reply)
+                    else:
+                        self.extraction_finished.emit(f"HTTP {response.status}: Failed to reach Ollama for memory.")
+        except asyncio.TimeoutError:
+            self.extraction_finished.emit("Memory extraction timed out.")
+        except aiohttp.ClientError as e:
+            self.extraction_finished.emit(f"Connection error to Ollama for memory: {e}")
+        except Exception as e:
+            self.extraction_finished.emit(f"Unexpected Memory extraction error: {e}")
+
+    def _parse_and_save(self, reply: str):
+        try:
+            # Try to find JSON array in case there is markdown or extra text
+            match = re.search(r'\[.*\]', reply, re.DOTALL)
+            if not match:
+                self.extraction_finished.emit("Failed to parse JSON array from LLM reply.")
+                return
+
+            json_str = match.group(0)
+            traits = json.loads(json_str)
+
+            if not traits:
+                self.extraction_finished.emit("No new traits extracted.")
+                return
+
+            with self.db_sessionmaker() as db:
+                added = 0
+                for item in traits:
+                    entity = item.get("entity", "").lower()
+                    trait = item.get("trait", "").strip()
+                    if entity in ("user", "pet") and trait:
+                        new_trait = MemoryTraits(entity_type=entity, trait_description=trait)
+                        db.add(new_trait)
+                        added += 1
+                db.commit()
+                self.extraction_finished.emit(f"Successfully extracted {added} traits.")
+        except json.JSONDecodeError as e:
+            self.extraction_finished.emit(f"JSON decode error: {e}")
+        except Exception as e:
+            self.extraction_finished.emit(f"Failed to save traits to DB: {e}")
 
 class VisionWorker(QThread):
     """Background thread that handles screen capture and LLaVA vision inference."""
@@ -364,6 +456,27 @@ class PetWindow(QWidget):
         self.worker = StatDecayWorker(self.state)
         self.worker.state_updated.connect(self.update_pet_state)
         self.worker.start()
+
+        self.memory_worker = None
+        self.memory_timer = QTimer(self)
+        self.memory_timer.timeout.connect(self.extract_memories)
+        self.memory_timer.start(300000)  # 5 minutes
+
+    def extract_memories(self):
+        if self.memory_worker and self.memory_worker.isRunning():
+            print("[DEBUG MEMORY] Memory extraction already running. Skipping this cycle.")
+            return
+
+        print("[DEBUG MEMORY] Starting memory extraction cycle...")
+        self.memory_worker = MemoryExtractionWorker(SessionLocal)
+        self.memory_worker.extraction_finished.connect(lambda msg: print(f"[DEBUG MEMORY] {msg}"))
+        self.memory_worker.finished.connect(self._cleanup_memory_worker)
+        self.memory_worker.start()
+
+    def _cleanup_memory_worker(self):
+        if self.memory_worker:
+            self.memory_worker.deleteLater()
+            self.memory_worker = None
 
     def update_pet_state(self, state: PetState):
         # Threshold Logic
