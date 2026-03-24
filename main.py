@@ -11,9 +11,10 @@ import os
 from dataclasses import dataclass
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QLabel, QMenu, QSystemTrayIcon, QVBoxLayout,
-    QTextEdit, QLineEdit, QDialog, QFormLayout, QDialogButtonBox
+    QTextEdit, QLineEdit, QDialog, QFormLayout, QDialogButtonBox,
+    QSpinBox, QCheckBox
 )
-from PyQt6.QtCore import Qt, QTimer, QPoint, QRect, QThread, pyqtSignal, QPropertyAnimation
+from PyQt6.QtCore import Qt, QTimer, QPoint, QRect, QThread, pyqtSignal, QPropertyAnimation, QSize
 from PyQt6.QtGui import QPixmap, QAction, QIcon, QGuiApplication, QMovie
 
 from database import init_db, ChatHistory, MemoryTraits
@@ -26,7 +27,9 @@ DEFAULT_CONFIG = {
     "chat_model": "llama3",
     "vision_model": "llava",
     "pet_name": "Pet",
-    "user_name": "User"
+    "user_name": "User",
+    "pet_size": 64,
+    "lock_to_taskbar": True
 }
 
 def load_settings():
@@ -65,11 +68,20 @@ class SettingsDialog(QDialog):
         self.pet_name_input = QLineEdit(self.config.get("pet_name", ""))
         self.user_name_input = QLineEdit(self.config.get("user_name", ""))
 
+        self.pet_size_input = QSpinBox()
+        self.pet_size_input.setRange(32, 256)
+        self.pet_size_input.setValue(self.config.get("pet_size", 64))
+
+        self.lock_to_taskbar_input = QCheckBox()
+        self.lock_to_taskbar_input.setChecked(self.config.get("lock_to_taskbar", True))
+
         self.layout.addRow("Ollama API URL:", self.ollama_url_input)
         self.layout.addRow("Chat Model:", self.chat_model_input)
         self.layout.addRow("Vision Model:", self.vision_model_input)
         self.layout.addRow("Pet Name:", self.pet_name_input)
         self.layout.addRow("User Name:", self.user_name_input)
+        self.layout.addRow("Pet Size (Pixels):", self.pet_size_input)
+        self.layout.addRow("Lock to Taskbar:", self.lock_to_taskbar_input)
 
         self.button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
         self.button_box.accepted.connect(self.save_and_accept)
@@ -83,6 +95,8 @@ class SettingsDialog(QDialog):
         self.config["vision_model"] = self.vision_model_input.text().strip()
         self.config["pet_name"] = self.pet_name_input.text().strip()
         self.config["user_name"] = self.user_name_input.text().strip()
+        self.config["pet_size"] = self.pet_size_input.value()
+        self.config["lock_to_taskbar"] = self.lock_to_taskbar_input.isChecked()
 
         save_settings(self.config)
         self.accept()
@@ -484,7 +498,10 @@ class PetWindow(QWidget):
             target_pos = QPoint(100, 100)
         else:
             target_x = random.randint(min_x, max_x)
-            target_y = random.randint(min_y, max_y)
+            if self.config.get("lock_to_taskbar", True):
+                target_y = max_y
+            else:
+                target_y = random.randint(min_y, max_y)
             target_pos = QPoint(target_x, target_y)
 
         print(f"[DEBUG WANDER] Calculated target_pos: ({target_pos.x()}, {target_pos.y()})")
@@ -610,6 +627,8 @@ class PetWindow(QWidget):
 
     def _setup_animation(self):
         self.movie = QMovie()
+        pet_size = self.config.get("pet_size", 64)
+        self.movie.setScaledSize(QSize(pet_size, pet_size))
         self.image_label.setMovie(self.movie)
 
         # Connect frame changed to resize window to gif size
@@ -623,6 +642,8 @@ class PetWindow(QWidget):
 
     def change_animation_state(self, state_name: str):
         path = self.sprite_paths.get(state_name)
+        pet_size = self.config.get("pet_size", 64)
+        self.movie.setScaledSize(QSize(pet_size, pet_size))
 
         if not path or not os.path.exists(path):
             print(f"Warning: Missing animation file for state '{state_name}' at path '{path}'.")
@@ -632,7 +653,7 @@ class PetWindow(QWidget):
             if not path or not os.path.exists(path):
                 print(f"Warning: Idle fallback missing. Using blue placeholder.")
                 self.movie.stop()
-                placeholder = QPixmap(64, 64)
+                placeholder = QPixmap(pet_size, pet_size)
                 placeholder.fill(Qt.GlobalColor.blue)
                 self.image_label.setPixmap(placeholder)
                 self.resize(placeholder.size())
