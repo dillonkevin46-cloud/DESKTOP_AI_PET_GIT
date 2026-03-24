@@ -37,7 +37,9 @@ python main.py
 * **Phase 1: The Shell (Complete)** - Frameless UI, system tray, and sprite animator.
 * **Phase 2: The Engine (Complete)** - Background state machine and UI state triggers.
 * **Phase 3: The Brain (Complete)** - Successfully integrated a local PostgreSQL instance via SQLAlchemy for long-term memory and local Ollama (Llama 3) via `aiohttp` for chatting.
-* **Phase 4: The Eyes & Legs (Planned)** - Add `mss` for screen grabbing, LLaVA for vision, and `QPropertyAnimation` for autonomous screen roaming.
+* **Phase 4: The Eyes & Legs (Complete)** - Uses `mss` and local LLaVA for screen grabbing and vision, alongside `QPropertyAnimation` for autonomous screen roaming.
+* **Phase 5: The Soul (Complete)** - Proactive Autonomy (the pet initiates conversation when boredom is high) and True Learning (a background extraction worker saves facts to `MemoryTraits` in PostgreSQL).
+* **Phase 6: Dynamic Sprites (Complete)** - Real-time sprite sheet swapping based on biological state.
 
 ## Troubleshooting
 * **Crash on Chat**: If the pet crashes when sending a message, ensure the local Ollama service is running.
