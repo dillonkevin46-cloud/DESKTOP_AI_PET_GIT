@@ -523,6 +523,10 @@ class PetWindow(QWidget):
         self.memory_timer.timeout.connect(self.extract_memories)
         self.memory_timer.start(300000)  # 5 minutes
 
+        self.continuous_vision_timer = QTimer(self)
+        self.continuous_vision_timer.timeout.connect(self.trigger_continuous_vision)
+        self.continuous_vision_timer.start(90000)  # 90 seconds
+
     def extract_memories(self):
         if self.memory_worker and self.memory_worker.isRunning():
             print("[DEBUG MEMORY] Memory extraction already running. Skipping this cycle.")
@@ -533,6 +537,14 @@ class PetWindow(QWidget):
         self.memory_worker.extraction_finished.connect(lambda msg: print(f"[DEBUG MEMORY] {msg}"))
         self.memory_worker.finished.connect(self._cleanup_memory_worker)
         self.memory_worker.start()
+
+    def trigger_continuous_vision(self):
+        if (self.vision_worker and self.vision_worker.isRunning()) or \
+           (self.autonomous_worker and self.autonomous_worker.isRunning()):
+            return
+
+        self.vision_mode = "autonomous"
+        self.look_at_screen()
 
     def _cleanup_memory_worker(self):
         if self.memory_worker:
