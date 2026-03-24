@@ -235,20 +235,21 @@ class ChatWidget(QWidget):
         self.worker = AIBrainWorker(msg, self.pet_state)
         self.worker.response_ready.connect(self._on_response)
         self.worker.error_occurred.connect(self._on_error)
-        self.worker.finished.connect(self.worker.deleteLater)
+        self.worker.finished.connect(self._cleanup_worker)
         self.worker.start()
 
     def _on_response(self, response: str):
         self.history_display.append(f"<b>Pet:</b> {response}")
-        self._cleanup_worker()
 
     def _on_error(self, error_msg: str):
         self.history_display.append(f"<i><span style='color:red;'>System:</span> {error_msg}</i>")
-        self._cleanup_worker()
 
     def _cleanup_worker(self):
         self.input_field.setEnabled(True)
         self.input_field.setFocus()
+        if self.worker:
+            self.worker.deleteLater()
+            self.worker = None
 
 
 class SpriteAnimator:
@@ -475,8 +476,13 @@ class PetWindow(QWidget):
         self.vision_worker = VisionWorker()
         self.vision_worker.response_ready.connect(self._on_vision_response)
         self.vision_worker.error_occurred.connect(self._on_vision_error)
-        self.vision_worker.finished.connect(self.vision_worker.deleteLater)
+        self.vision_worker.finished.connect(self._cleanup_vision_worker)
         self.vision_worker.start()
+
+    def _cleanup_vision_worker(self):
+        if self.vision_worker:
+            self.vision_worker.deleteLater()
+            self.vision_worker = None
 
     def _on_vision_response(self, observation: str):
         self.chat_widget.history_display.append(f"<i><b>Pet sees:</b> {observation}</i>")
