@@ -2,12 +2,15 @@ import sys
 import time
 import asyncio
 import aiohttp
+import mss
+import base64
+import random
 from dataclasses import dataclass
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QLabel, QMenu, QSystemTrayIcon, QVBoxLayout,
     QTextEdit, QLineEdit
 )
-from PyQt6.QtCore import Qt, QTimer, QPoint, QRect, QThread, pyqtSignal
+from PyQt6.QtCore import Qt, QTimer, QPoint, QRect, QThread, pyqtSignal, QPropertyAnimation
 from PyQt6.QtGui import QPixmap, QAction, QIcon, QGuiApplication
 
 from database import init_db, ChatHistory, MemoryTraits
@@ -139,6 +142,59 @@ class AIBrainWorker(QThread):
             except Exception as e:
                 print(f"Failed to save {role} message to DB: {e}")
 
+class VisionWorker(QThread):
+    """Background thread that handles screen capture and LLaVA vision inference."""
+    response_ready = pyqtSignal(str)
+    error_occurred = pyqtSignal(str)
+
+    def __init__(self):
+        super().__init__()
+        self.url = "http://localhost:11434/api/generate"
+        self.prompt = "Briefly describe what the user is doing on their screen in one short sentence. Act as a cute desktop pet observing them."
+
+    def run(self):
+        asyncio.run(self.process_vision())
+
+    async def process_vision(self):
+        try:
+            with mss.mss() as sct:
+                # Capture the primary monitor
+                monitor = sct.monitors[1]
+                sct_img = sct.grab(monitor)
+
+                # Convert to PNG bytes
+                img_bytes = mss.tools.to_png(sct_img.rgb, sct_img.size)
+
+                # Encode to base64
+                base64_img = base64.b64encode(img_bytes).decode('utf-8')
+
+            payload = {
+                "model": "llava",
+                "prompt": self.prompt,
+                "images": [base64_img],
+                "stream": False
+            }
+
+            async with aiohttp.ClientSession() as session:
+                async with session.post(self.url, json=payload, timeout=60) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        llm_reply = data.get("response", "").strip()
+                        self.response_ready.emit(llm_reply)
+                    else:
+                        error_msg = f"HTTP {response.status}: Failed to reach Ollama."
+                        self.error_occurred.emit(error_msg)
+
+        except mss.exception.ScreenShotError as e:
+            self.error_occurred.emit(f"Failed to capture screen: {e}")
+        except aiohttp.ClientError as e:
+            self.error_occurred.emit(f"Connection error to Ollama: {e}")
+        except asyncio.TimeoutError:
+            self.error_occurred.emit("Ollama API timed out.")
+        except Exception as e:
+            self.error_occurred.emit(f"Unexpected Vision error: {e}")
+
+
 class ChatWidget(QWidget):
     """Semi-transparent tool window for chatting with the pet."""
     def __init__(self, pet_state: PetState, parent=None):
@@ -257,6 +313,7 @@ class PetWindow(QWidget):
         self.state = PetState()
 
         self.chat_widget = ChatWidget(self.state)
+        self.vision_worker = None
 
         self._setup_window()
         self._setup_multi_monitor()
@@ -264,6 +321,35 @@ class PetWindow(QWidget):
         self._setup_tray()
         self._setup_animation(sprite_path)
         self._setup_worker()
+        self._setup_roaming()
+
+    def _setup_roaming(self):
+        self.roam_animation = QPropertyAnimation(self, b"pos")
+
+        self.roam_timer = QTimer(self)
+        self.roam_timer.timeout.connect(self.wander)
+        # Trigger wander every 15 to 30 seconds
+        self.roam_timer.start(random.randint(15000, 30000))
+
+    def wander(self):
+        # Calculate random position within total_screen_geometry
+        min_x = self.total_screen_geometry.left()
+        max_x = self.total_screen_geometry.right() - self.width()
+
+        min_y = self.total_screen_geometry.top()
+        max_y = self.total_screen_geometry.bottom() - self.height()
+
+        if max_x > min_x and max_y > min_y:
+            target_x = random.randint(min_x, max_x)
+            target_y = random.randint(min_y, max_y)
+            target_pos = QPoint(target_x, target_y)
+
+            self.roam_animation.setDuration(random.randint(3000, 5000))
+            self.roam_animation.setEndValue(target_pos)
+            self.roam_animation.start()
+
+            # Reset timer for next wander
+            self.roam_timer.setInterval(random.randint(15000, 30000))
 
     def _setup_worker(self):
         self.worker = StatDecayWorker(self.state)
@@ -321,6 +407,10 @@ class PetWindow(QWidget):
         toggle_chat_action.triggered.connect(self.toggle_chat)
         self.tray_menu.addAction(toggle_chat_action)
 
+        look_action = QAction("Look at Screen", self)
+        look_action.triggered.connect(self.look_at_screen)
+        self.tray_menu.addAction(look_action)
+
         quit_action = QAction("Quit", self)
         quit_action.triggered.connect(self.quit_app)
         self.tray_menu.addAction(quit_action)
@@ -361,6 +451,22 @@ class PetWindow(QWidget):
             self.chat_widget.hide()
         else:
             self.chat_widget.show()
+
+    def look_at_screen(self):
+        if self.vision_worker and self.vision_worker.isRunning():
+            return  # Ignore if already looking
+
+        self.vision_worker = VisionWorker()
+        self.vision_worker.response_ready.connect(self._on_vision_response)
+        self.vision_worker.error_occurred.connect(self._on_vision_error)
+        self.vision_worker.finished.connect(self.vision_worker.deleteLater)
+        self.vision_worker.start()
+
+    def _on_vision_response(self, observation: str):
+        self.chat_widget.history_display.append(f"<i><b>Pet sees:</b> {observation}</i>")
+
+    def _on_vision_error(self, error_msg: str):
+        self.chat_widget.history_display.append(f"<i><span style='color:red;'>System (Vision):</span> {error_msg}</i>")
 
     def quit_app(self):
         print("Stopping worker thread safely...")
