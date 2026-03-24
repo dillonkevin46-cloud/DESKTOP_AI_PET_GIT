@@ -8,6 +8,7 @@ import random
 import json
 import re
 import os
+from duckduckgo_search import DDGS
 from dataclasses import dataclass
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QLabel, QMenu, QSystemTrayIcon, QVBoxLayout,
@@ -155,6 +156,13 @@ class AIBrainWorker(QThread):
     def run(self):
         asyncio.run(self.process_message())
 
+    def _needs_web_search(self, msg: str) -> bool:
+        if msg.startswith("[System:"):
+            return False
+        lower_msg = msg.lower()
+        keywords = ["what is", "who is", "search for", "weather", "news", "current event", "tell me about"]
+        return any(keyword in lower_msg for keyword in keywords)
+
     async def process_message(self):
         messages = self._build_context()
 
@@ -163,6 +171,18 @@ class AIBrainWorker(QThread):
 
         # Save user message to DB
         self._save_to_db("user", self.user_message)
+
+        # Web Search Integration
+        if self._needs_web_search(self.user_message):
+            try:
+                results = DDGS().text(self.user_message, max_results=3)
+                if results:
+                    search_context = "Web Search Results:\n"
+                    for r in results:
+                        search_context += f"- {r.get('body', '')}\n"
+                    messages.append({"role": "system", "content": search_context})
+            except Exception as e:
+                print(f"[DEBUG BRAIN] DuckDuckGo search failed: {e}")
 
         payload = {
             "model": self.config.get("chat_model"),
