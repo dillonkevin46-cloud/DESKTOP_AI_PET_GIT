@@ -503,14 +503,21 @@ class PetWindow(QWidget):
         self.roam_timer.start(random.randint(15000, 30000))
 
     def wander(self):
-        # Calculate random position within total_screen_geometry
-        min_x = self.total_screen_geometry.left()
-        max_x = self.total_screen_geometry.right() - self.width()
+        screen = QGuiApplication.screenAt(self.geometry().center())
+        if not screen:
+            screen = QGuiApplication.primaryScreen()
 
-        min_y = self.total_screen_geometry.top()
-        max_y = self.total_screen_geometry.bottom() - self.height()
+        screen_geo = screen.availableGeometry()
+
+        # Calculate random position within the current screen's available geometry
+        min_x = screen_geo.left()
+        max_x = screen_geo.right() - self.width()
+
+        min_y = screen_geo.top()
+        max_y = screen_geo.bottom() - self.height()
 
         print(f"[DEBUG WANDER] Pet dimensions: {self.width()}x{self.height()}")
+        print(f"[DEBUG WANDER] Screen: {screen.name()} | Available Geo: {screen_geo}")
         print(f"[DEBUG WANDER] X Range: {min_x} to {max_x} | Y Range: {min_y} to {max_y}")
 
         if max_x <= min_x or max_y <= min_y:
