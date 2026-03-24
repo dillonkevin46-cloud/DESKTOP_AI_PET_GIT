@@ -1,0 +1,17 @@
+qt.core.qobject.connect: QObject::connect: No such signal QPlatformNativeInterface::systemTrayWindowChanged(QScreen*)
+This plugin does not support propagateSizeHints()
+This plugin does not support raise()
+This plugin does not support propagateSizeHints()
+Warning: Could not connect to PostgreSQL database. Make sure it is running.
+Error: (psycopg2.OperationalError) connection to server at "localhost" (::1), port 5432 failed: Connection refused
+	Is the server running on that host and accepting TCP/IP connections?
+connection to server at "localhost" (127.0.0.1), port 5432 failed: Connection refused
+	Is the server running on that host and accepting TCP/IP connections?
+
+(Background on this error at: https://sqlalche.me/e/20/e3q8)
+Total bounding geometry of all monitors: PyQt6.QtCore.QRect(0, 0, 800, 800)
+Warning: Could not load sprite sheet from placeholder_sprite.png
+Tick - Energy: 95, Hunger: 5, Boredom: 5, Activity: idle
+Tick - Energy: 90, Hunger: 10, Boredom: 10, Activity: idle
+Tick - Energy: 85, Hunger: 15, Boredom: 15, Activity: idle
+Tick - Energy: 80, Hunger: 20, Boredom: 20, Activity: idle
