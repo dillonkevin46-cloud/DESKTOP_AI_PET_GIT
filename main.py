@@ -351,24 +351,30 @@ class ChatWidget(QWidget):
 
 class SpriteAnimator:
     """Handles loading and animating a sprite sheet."""
-    def __init__(self, sprite_sheet_path: str, frame_width: int, frame_height: int, frame_count: int, update_interval: int = 100):
-        self.sprite_sheet_path = sprite_sheet_path
+    def __init__(self, sprite_paths: dict[str, str], frame_width: int, frame_height: int, frame_count: int, update_interval: int = 100):
+        self.sprite_paths = sprite_paths
         self.frame_width = frame_width
         self.frame_height = frame_height
         self.frame_count = frame_count
         self.current_frame = 0
 
         self.frames = []
-        self._load_frames()
+        self.change_state("idle")
 
         self.timer = QTimer()
         self.timer.setInterval(update_interval)
 
-    def _load_frames(self):
-        sprite_sheet = QPixmap(self.sprite_sheet_path)
+    def change_state(self, state_name: str):
+        path = self.sprite_paths.get(state_name, self.sprite_paths.get("idle", "idle.png"))
+        self._load_frames(path)
+        self.current_frame = 0
+
+    def _load_frames(self, path: str):
+        self.frames = []
+        sprite_sheet = QPixmap(path)
         if sprite_sheet.isNull():
             # If the image failed to load, we can create dummy empty pixmaps or log a warning
-            print(f"Warning: Could not load sprite sheet from {self.sprite_sheet_path}")
+            print(f"Warning: Could not load sprite sheet from {path}")
             # Create a placeholder visible frame if file not found
             placeholder = QPixmap(self.frame_width, self.frame_height)
             placeholder.fill(Qt.GlobalColor.blue)
@@ -402,9 +408,10 @@ class SpriteAnimator:
 
 class PetWindow(QWidget):
     """The main transparent, frameless window for the virtual pet."""
-    def __init__(self, sprite_path: str):
+    def __init__(self, sprite_paths: dict[str, str]):
         super().__init__()
 
+        self.sprite_paths = sprite_paths
         self.drag_position = QPoint()
         self.total_screen_geometry = QRect()
 
@@ -421,7 +428,7 @@ class PetWindow(QWidget):
         self._setup_multi_monitor()
         self._setup_ui()
         self._setup_tray()
-        self._setup_animation(sprite_path)
+        self._setup_animation()
         self._setup_worker()
         self._setup_roaming()
 
@@ -491,10 +498,16 @@ class PetWindow(QWidget):
         # Threshold Logic
         if state.energy < 10 and state.current_activity != 'sleeping':
             state.current_activity = 'sleeping'
+            self.animator.change_state('sleeping')
             print("State change: Energy is low! Switching to sleep sprite.", flush=True)
         elif state.hunger > 80 and state.current_activity != 'hungry':
             state.current_activity = 'hungry'
+            self.animator.change_state('hungry')
             print("State change: Very hungry! Switching to hungry sprite.", flush=True)
+        elif state.energy >= 10 and state.hunger <= 80 and state.current_activity != 'idle':
+            state.current_activity = 'idle'
+            self.animator.change_state('idle')
+            print("State change: Stats are normal. Switching to idle sprite.", flush=True)
         else:
             print(f"Tick - Energy: {state.energy}, Hunger: {state.hunger}, Boredom: {state.boredom}, Activity: {state.current_activity}", flush=True)
 
@@ -563,13 +576,13 @@ class PetWindow(QWidget):
         self.tray_icon.setContextMenu(self.tray_menu)
         self.tray_icon.show()
 
-    def _setup_animation(self, sprite_path: str):
+    def _setup_animation(self):
         # Placeholder dimensions, adjust these for actual sprite sheet
         frame_w = 64
         frame_h = 64
         frame_count = 4
 
-        self.animator = SpriteAnimator(sprite_path, frame_w, frame_h, frame_count)
+        self.animator = SpriteAnimator(self.sprite_paths, frame_w, frame_h, frame_count)
         self.animator.start(self._on_frame_updated)
 
     def _on_frame_updated(self, pixmap: QPixmap):
@@ -650,10 +663,13 @@ def main():
     # (Though we keep ours visible, it's good practice for tray apps)
     app.setQuitOnLastWindowClosed(False)
 
-    # Placeholder sprite path
-    SPRITE_SHEET_PATH = "placeholder_sprite.png"
+    sprite_paths = {
+        "idle": "idle.png",
+        "sleeping": "sleep.png",
+        "hungry": "hungry.png"
+    }
 
-    pet = PetWindow(SPRITE_SHEET_PATH)
+    pet = PetWindow(sprite_paths)
     pet.show()
 
     sys.exit(app.exec())
