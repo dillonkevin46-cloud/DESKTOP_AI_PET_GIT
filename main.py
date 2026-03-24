@@ -323,6 +323,11 @@ class ChatWidget(QWidget):
         self.history_display.append(f"<b>You:</b> {msg}")
         self.input_field.setEnabled(False) # Disable input while processing
 
+        # Reset boredom to reward user interaction
+        self.pet_state.boredom = 0
+        if self.parent():
+            self.parent().autonomy_triggered = False
+
         # Spawn AIBrainWorker
         self.worker = AIBrainWorker(msg, self.pet_state)
         self.worker.response_ready.connect(self._on_response)
@@ -405,8 +410,12 @@ class PetWindow(QWidget):
 
         self.state = PetState()
 
-        self.chat_widget = ChatWidget(self.state)
+        self.chat_widget = ChatWidget(self.state, parent=self)
         self.vision_worker = None
+
+        self.autonomy_triggered = False
+        self.vision_mode = "manual"
+        self.autonomous_worker = None
 
         self._setup_window()
         self._setup_multi_monitor()
@@ -488,6 +497,12 @@ class PetWindow(QWidget):
             print("State change: Very hungry! Switching to hungry sprite.", flush=True)
         else:
             print(f"Tick - Energy: {state.energy}, Hunger: {state.hunger}, Boredom: {state.boredom}, Activity: {state.current_activity}", flush=True)
+
+        if state.boredom >= 80 and not self.autonomy_triggered:
+            print("State change: High boredom! Initiating autonomous interaction.", flush=True)
+            self.autonomy_triggered = True
+            self.vision_mode = "autonomous"
+            self.look_at_screen()
 
     def _setup_window(self):
         self.setWindowFlags(
@@ -598,10 +613,30 @@ class PetWindow(QWidget):
             self.vision_worker = None
 
     def _on_vision_response(self, observation: str):
-        self.chat_widget.history_display.append(f"<i><b>Pet sees:</b> {observation}</i>")
+        if self.vision_mode == "manual":
+            self.chat_widget.history_display.append(f"<i><b>Pet sees:</b> {observation}</i>")
+        elif self.vision_mode == "autonomous":
+            prompt = f"[System: You are extremely bored. You look at the user's screen and see: {observation}. Say something short, sassy, or needy to interrupt them and get their attention.]"
+            self.autonomous_worker = AIBrainWorker(prompt, self.state)
+            self.autonomous_worker.response_ready.connect(self._on_autonomous_response)
+            self.autonomous_worker.error_occurred.connect(self._on_vision_error)
+            self.autonomous_worker.finished.connect(self._cleanup_autonomous_brain)
+            self.autonomous_worker.start()
+
+    def _on_autonomous_response(self, response: str):
+        self.chat_widget.history_display.append(f"<b>Pet:</b> {response}")
+        self.chat_widget.show()
+        self.vision_mode = "manual"
+
+    def _cleanup_autonomous_brain(self):
+        if self.autonomous_worker:
+            self.autonomous_worker.deleteLater()
+            self.autonomous_worker = None
 
     def _on_vision_error(self, error_msg: str):
         self.chat_widget.history_display.append(f"<i><span style='color:red;'>System (Vision):</span> {error_msg}</i>")
+        if self.vision_mode == "autonomous":
+            self.vision_mode = "manual"
 
     def quit_app(self):
         print("Stopping worker thread safely...")
