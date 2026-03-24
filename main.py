@@ -339,17 +339,25 @@ class PetWindow(QWidget):
         min_y = self.total_screen_geometry.top()
         max_y = self.total_screen_geometry.bottom() - self.height()
 
-        if max_x > min_x and max_y > min_y:
+        print(f"[DEBUG WANDER] Pet dimensions: {self.width()}x{self.height()}")
+        print(f"[DEBUG WANDER] X Range: {min_x} to {max_x} | Y Range: {min_y} to {max_y}")
+
+        if max_x <= min_x or max_y <= min_y:
+            print("[WARNING] Invalid screen geometry boundaries. Forcing target_pos to (100, 100).")
+            target_pos = QPoint(100, 100)
+        else:
             target_x = random.randint(min_x, max_x)
             target_y = random.randint(min_y, max_y)
             target_pos = QPoint(target_x, target_y)
 
-            self.roam_animation.setDuration(random.randint(3000, 5000))
-            self.roam_animation.setEndValue(target_pos)
-            self.roam_animation.start()
+        print(f"[DEBUG WANDER] Calculated target_pos: ({target_pos.x()}, {target_pos.y()})")
 
-            # Reset timer for next wander
-            self.roam_timer.setInterval(random.randint(15000, 30000))
+        self.roam_animation.setDuration(random.randint(3000, 5000))
+        self.roam_animation.setEndValue(target_pos)
+        self.roam_animation.start()
+
+        # Reset timer for next wander
+        self.roam_timer.setInterval(random.randint(15000, 30000))
 
     def _setup_worker(self):
         self.worker = StatDecayWorker(self.state)
@@ -396,12 +404,16 @@ class PetWindow(QWidget):
     def _setup_tray(self):
         self.tray_icon = QSystemTrayIcon(self)
 
-        # Creating a red placeholder icon for the tray
+        # Creating a green placeholder icon for the tray
         placeholder_icon = QPixmap(16, 16)
-        placeholder_icon.fill(Qt.GlobalColor.red)
+        placeholder_icon.fill(Qt.GlobalColor.green)
         self.tray_icon.setIcon(QIcon(placeholder_icon))
 
         self.tray_menu = QMenu(self)
+
+        version_action = QAction("--- Version 4 (Vision & Roaming) ---", self)
+        version_action.setEnabled(False)
+        self.tray_menu.addAction(version_action)
 
         toggle_chat_action = QAction("Toggle Chat", self)
         toggle_chat_action.triggered.connect(self.toggle_chat)
@@ -410,6 +422,10 @@ class PetWindow(QWidget):
         look_action = QAction("Look at Screen", self)
         look_action.triggered.connect(self.look_at_screen)
         self.tray_menu.addAction(look_action)
+
+        force_wander_action = QAction("Force Wander", self)
+        force_wander_action.triggered.connect(self.wander)
+        self.tray_menu.addAction(force_wander_action)
 
         quit_action = QAction("Quit", self)
         quit_action.triggered.connect(self.quit_app)
