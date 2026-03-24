@@ -126,11 +126,15 @@ class StatDecayWorker(QThread):
             time.sleep(0.5)
             ticks_passed += 0.5
 
-            if ticks_passed >= 5:
-                # Drain energy, increase hunger and boredom
-                self.state.energy = max(0, self.state.energy - 5)
-                self.state.hunger = min(100, self.state.hunger + 5)
-                self.state.boredom = min(100, self.state.boredom + 5)
+            if ticks_passed >= 30:
+                if self.state.current_activity == 'sleeping':
+                    # Sleeping regens energy, doesn't increase hunger/boredom
+                    self.state.energy = min(100, self.state.energy + 10)
+                else:
+                    # Drain energy, increase hunger and boredom
+                    self.state.energy = max(0, self.state.energy - 2)
+                    self.state.hunger = min(100, self.state.hunger + 3)
+                    self.state.boredom = min(100, self.state.boredom + 3)
 
                 # Emit the updated state back to the main GUI thread
                 self.state_updated.emit(self.state)
@@ -716,6 +720,47 @@ class PetWindow(QWidget):
         if event.buttons() == Qt.MouseButton.LeftButton:
             self.move(event.globalPosition().toPoint() - self.drag_position)
             event.accept()
+
+    def contextMenuEvent(self, event):
+        menu = QMenu(self)
+
+        pet_action = QAction("Pet him", self)
+        pet_action.triggered.connect(self._action_pet)
+        menu.addAction(pet_action)
+
+        feed_action = QAction("Feed him", self)
+        feed_action.triggered.connect(self._action_feed)
+        menu.addAction(feed_action)
+
+        play_action = QAction("Play with him", self)
+        play_action.triggered.connect(self._action_play)
+        menu.addAction(play_action)
+
+        sleep_action = QAction("Put to sleep", self)
+        sleep_action.triggered.connect(self._action_sleep)
+        menu.addAction(sleep_action)
+
+        menu.exec(event.globalPos())
+
+    def _action_pet(self):
+        self.state.affection = min(100, self.state.affection + 20)
+        print(f"[INTERACTION] You petted the pet. Affection is now {self.state.affection}.")
+        self.update_pet_state(self.state)
+
+    def _action_feed(self):
+        self.state.hunger = 0
+        print("[INTERACTION] You fed the pet. Hunger is now 0.")
+        self.update_pet_state(self.state)
+
+    def _action_play(self):
+        self.state.boredom = 0
+        print("[INTERACTION] You played with the pet. Boredom is now 0.")
+        self.update_pet_state(self.state)
+
+    def _action_sleep(self):
+        self.state.current_activity = 'sleeping'
+        print("[INTERACTION] You put the pet to sleep.")
+        self.update_pet_state(self.state)
 
     def toggle_chat(self):
         if self.chat_widget.isVisible():
