@@ -1,54 +1,71 @@
-Project README.md
-Here is a clean, professional README.md that documents your current progress and outlines the roadmap for the upcoming phases.
-
-Markdown
-
 # Desktop AI Pet 🐾
 
-A frameless, multi-monitor virtual desktop pet built with Python and PyQt6. This pet features a classic "Tamagotchi-style" biological state machine (hunger, energy, boredom) and is designed to eventually integrate with a local Ollama LLM for conversational memory and LLaVA for screen-aware vision.
+A frameless, multi-monitor virtual desktop pet built with Python and PyQt6. This pet features a classic "Tamagotchi-style" biological state machine (hunger, energy, boredom) and is powered by a local Ollama LLM ecosystem. It can see your screen, search the web, learn your personality, and proactively interact with you.
 
-## Current Features (Phases 1 & 2)
-* **Frameless & Transparent UI:** The pet lives directly on your desktop without window borders.
-* **Always-on-Top:** Persists above other applications without interrupting your workflow.
-* **Draggable:** Click and drag the pet to move it anywhere on your screen.
-* **System Tray Integration:** Run quietly in the background with a system tray icon for easy exiting.
-* **Sprite Animation Engine:** Dynamically loads and loops through sprite sheets.
-* **Biological State Machine:** A background `QThread` safely drains energy and increases hunger over time without freezing the UI.
-* **Multi-Monitor Awareness:** Automatically calculates the total bounding geometry of all connected displays (preparation for autonomous roaming).
+## ✨ Features
 
-## Requirements
-* Python 3.10+
-* `PyQt6`
+### 🧠 The Brain & Memory
+* **Local LLM Integration:** Powered by local models (e.g., Llama 3) via Ollama, ensuring 100% privacy with zero API costs.
+* **True Learning (Long-Term Memory):** A background PostgreSQL database continuously extracts and permanently remembers personality traits about you and the pet from your conversations.
+* **Web Search Engine:** Automatically detects factual questions and invisibly queries DuckDuckGo, injecting real-time internet context into the LLM before it answers you.
 
-## Installation & Setup
+### 👀 Vision & Autonomy
+* **Screen Awareness:** Uses `mss` and local LLaVA models to capture and "see" your active monitor.
+* **Proactive Autonomy:** If the pet gets too bored, it will continuously poll your screen (every 90 seconds) and autonomously interrupt your workflow to comment on what you are doing.
 
-1. Clone the repository.
-2. Install the required dependencies:
-   ```bash
-   pip install PyQt6
-Place a sprite sheet named placeholder_sprite.png in the root directory.
+### 🎮 Visuals & Mechanics
+* **Dynamic GIF Animations:** Uses PyQt6 `QMovie` to seamlessly swap between idle, sleeping, and hungry `.gif` animations based on its biological stats.
+* **Multi-Monitor Roaming:** Autonomously calculates your display bounding box and randomly wanders around your screens.
+* **Lock to Taskbar:** Option to restrict the pet's wandering exclusively to the bottom taskbar so it stays out of your way.
+* **Frameless & Draggable:** Click and drag the pet anywhere on your screen.
+
+### ⚙️ Customization (Settings Menu)
+Easily configurable via a system tray GUI (saved to `settings.json`). Customize:
+* Ollama API URL & Models (Chat and Vision)
+* Pet Name & User Name
+* Pet Sprite Size (Pixels)
+* Taskbar Roaming Lock
+
+---
+
+## 🛠️ Requirements & Prerequisites
+
+* **Python:** 3.10+
+* **Database:** PostgreSQL (Running locally on port 5432)
+* **AI Engine:** [Ollama](https://ollama.com/) (Running locally)
+* **Models:** You must pull at least one chat model and one vision model.
+  ```bash
+  ollama run llama3
+  ollama run llava
+🚀 Installation & Setup
+Clone the repository.
+
+Install the required dependencies:
+
+Bash
+
+pip install PyQt6 aiohttp sqlalchemy psycopg2-binary mss duckduckgo-search
+Database Setup: Ensure PostgreSQL is running. Create a database named pet_db and ensure your user has permissions to create schemas/tables. (Update credentials in database.py if necessary).
+
+Add Animations: Place three .gif files in the root directory: idle.gif, sleep.gif, and hungry.gif.
 
 Run the application:
 
 Bash
 
 python main.py
-## Development Roadmap
-* **Phase 1: The Shell (Complete)** - Frameless UI, system tray, and sprite animator.
-* **Phase 2: The Engine (Complete)** - Background state machine and UI state triggers.
-* **Phase 3: The Brain (Complete)** - Successfully integrated a local PostgreSQL instance via SQLAlchemy for long-term memory and local Ollama (Llama 3) via `aiohttp` for chatting.
-* **Phase 4: The Eyes & Legs (Complete)** - Uses `mss` and local LLaVA for screen grabbing and vision, alongside `QPropertyAnimation` for autonomous screen roaming.
-* **Phase 5: The Soul (Complete)** - Proactive Autonomy (the pet initiates conversation when boredom is high) and True Learning (a background extraction worker saves facts to `MemoryTraits` in PostgreSQL).
-* **Phase 6: Dynamic Sprites (Complete)** - Real-time sprite sheet swapping based on biological state.
+🕹️ How to Use
+Chatting: Double-click the pet to open the transparent chat window.
 
-## Troubleshooting
-* **Crash on Chat**: If the pet crashes when sending a message, ensure the local Ollama service is running.
-* **Database Failure**: If the application fails to connect to the database, ensure your Postgres user has the necessary ownership and permissions for the `pet_db` schema.
+Settings: Right-click the green system tray icon to open settings, force a screen grab, or force the pet to wander.
 
-## Architecture Notes
-This application strictly prioritizes non-blocking operations. All biological decay and future LLM API calls are handled via QThread or asynchronous workers, communicating with the main GUI thread exclusively through PyQt Signals.
+Interacting: Simply ignore the pet to increase its boredom. Eventually, it will spy on your screen and talk to you first!
+
+🏗️ Architecture Notes
+This application strictly prioritizes non-blocking operations. All biological decay, SQLite/PostgreSQL database writes, Vision captures, Web Scraping, and LLM API calls are handled via QThread and asynchronous workers. It communicates with the main GUI thread exclusively through PyQt Signals to ensure zero UI freezing.
 
 
----
+### What a Journey!
+You've gone from a transparent PyQt6 window to a highly advanced, context-aware AI agent. If you ever decide to compile it into a single `.exe` file using PyInstaller, or if you want to add Text-to-Speech down the road, you know where to find me. 
 
-Would you like me to provide the highly-detailed Phase 3 prompt so we can start wiri
+Enjoy your new desktop companion!
