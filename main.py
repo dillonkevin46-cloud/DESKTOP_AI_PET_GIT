@@ -7,13 +7,14 @@ import base64
 import random
 import json
 import re
+import os
 from dataclasses import dataclass
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QLabel, QMenu, QSystemTrayIcon, QVBoxLayout,
     QTextEdit, QLineEdit
 )
 from PyQt6.QtCore import Qt, QTimer, QPoint, QRect, QThread, pyqtSignal, QPropertyAnimation
-from PyQt6.QtGui import QPixmap, QAction, QIcon, QGuiApplication
+from PyQt6.QtGui import QPixmap, QAction, QIcon, QGuiApplication, QMovie
 
 from database import init_db, ChatHistory, MemoryTraits
 
@@ -349,63 +350,6 @@ class ChatWidget(QWidget):
             self.worker = None
 
 
-class SpriteAnimator:
-    """Handles loading and animating a sprite sheet."""
-    def __init__(self, sprite_paths: dict[str, str], frame_width: int, frame_height: int, frame_count: int, update_interval: int = 100):
-        self.sprite_paths = sprite_paths
-        self.frame_width = frame_width
-        self.frame_height = frame_height
-        self.frame_count = frame_count
-        self.current_frame = 0
-
-        self.frames = []
-        self.change_state("idle")
-
-        self.timer = QTimer()
-        self.timer.setInterval(update_interval)
-
-    def change_state(self, state_name: str):
-        path = self.sprite_paths.get(state_name, self.sprite_paths.get("idle", "idle.png"))
-        self._load_frames(path)
-        self.current_frame = 0
-
-    def _load_frames(self, path: str):
-        self.frames = []
-        sprite_sheet = QPixmap(path)
-        if sprite_sheet.isNull():
-            # If the image failed to load, we can create dummy empty pixmaps or log a warning
-            print(f"Warning: Could not load sprite sheet from {path}")
-            # Create a placeholder visible frame if file not found
-            placeholder = QPixmap(self.frame_width, self.frame_height)
-            placeholder.fill(Qt.GlobalColor.blue)
-            self.frames = [placeholder] * self.frame_count
-            return
-
-        for i in range(self.frame_count):
-            # Assuming a horizontal sprite sheet for simplicity
-            rect = QRect(i * self.frame_width, 0, self.frame_width, self.frame_height)
-            frame = sprite_sheet.copy(rect)
-            self.frames.append(frame)
-
-    def start(self, callback):
-        """Starts the animation, calling `callback` with the current frame's pixmap."""
-        self._callback = callback
-        self.timer.timeout.connect(self._update_frame)
-        self.timer.start()
-
-    def stop(self):
-        self.timer.stop()
-
-    def _update_frame(self):
-        if not self.frames:
-            return
-
-        frame = self.frames[self.current_frame]
-        if hasattr(self, '_callback'):
-            self._callback(frame)
-
-        self.current_frame = (self.current_frame + 1) % self.frame_count
-
 class PetWindow(QWidget):
     """The main transparent, frameless window for the virtual pet."""
     def __init__(self, sprite_paths: dict[str, str]):
@@ -498,15 +442,15 @@ class PetWindow(QWidget):
         # Threshold Logic
         if state.energy < 10 and state.current_activity != 'sleeping':
             state.current_activity = 'sleeping'
-            self.animator.change_state('sleeping')
+            self.change_animation_state('sleeping')
             print("State change: Energy is low! Switching to sleep sprite.", flush=True)
         elif state.hunger > 80 and state.current_activity != 'hungry':
             state.current_activity = 'hungry'
-            self.animator.change_state('hungry')
+            self.change_animation_state('hungry')
             print("State change: Very hungry! Switching to hungry sprite.", flush=True)
         elif state.energy >= 10 and state.hunger <= 80 and state.current_activity != 'idle':
             state.current_activity = 'idle'
-            self.animator.change_state('idle')
+            self.change_animation_state('idle')
             print("State change: Stats are normal. Switching to idle sprite.", flush=True)
         else:
             print(f"Tick - Energy: {state.energy}, Hunger: {state.hunger}, Boredom: {state.boredom}, Activity: {state.current_activity}", flush=True)
@@ -577,17 +521,38 @@ class PetWindow(QWidget):
         self.tray_icon.show()
 
     def _setup_animation(self):
-        # Placeholder dimensions, adjust these for actual sprite sheet
-        frame_w = 64
-        frame_h = 64
-        frame_count = 4
+        self.movie = QMovie()
+        self.image_label.setMovie(self.movie)
 
-        self.animator = SpriteAnimator(self.sprite_paths, frame_w, frame_h, frame_count)
-        self.animator.start(self._on_frame_updated)
+        # Connect frame changed to resize window to gif size
+        self.movie.frameChanged.connect(self._on_frame_changed)
 
-    def _on_frame_updated(self, pixmap: QPixmap):
-        self.image_label.setPixmap(pixmap)
-        self.resize(pixmap.size())
+        self.change_animation_state("idle")
+
+    def _on_frame_changed(self):
+        if self.movie.currentPixmap():
+            self.resize(self.movie.currentPixmap().size())
+
+    def change_animation_state(self, state_name: str):
+        path = self.sprite_paths.get(state_name)
+
+        if not path or not os.path.exists(path):
+            print(f"Warning: Missing animation file for state '{state_name}' at path '{path}'.")
+            # Try falling back to idle
+            path = self.sprite_paths.get("idle")
+
+            if not path or not os.path.exists(path):
+                print(f"Warning: Idle fallback missing. Using blue placeholder.")
+                self.movie.stop()
+                placeholder = QPixmap(64, 64)
+                placeholder.fill(Qt.GlobalColor.blue)
+                self.image_label.setPixmap(placeholder)
+                self.resize(placeholder.size())
+                return
+
+        self.movie.stop()
+        self.movie.setFileName(path)
+        self.movie.start()
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -664,9 +629,9 @@ def main():
     app.setQuitOnLastWindowClosed(False)
 
     sprite_paths = {
-        "idle": "idle.png",
-        "sleeping": "sleep.png",
-        "hungry": "hungry.png"
+        "idle": "idle.gif",
+        "sleeping": "sleep.gif",
+        "hungry": "hungry.gif"
     }
 
     pet = PetWindow(sprite_paths)
