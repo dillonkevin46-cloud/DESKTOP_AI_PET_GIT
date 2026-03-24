@@ -33,16 +33,17 @@ Run the application:
 Bash
 
 python main.py
-Development Roadmap
-Phase 1: The Shell (Complete) - Frameless UI, system tray, and sprite animator.
+## Development Roadmap
+* **Phase 1: The Shell (Complete)** - Frameless UI, system tray, and sprite animator.
+* **Phase 2: The Engine (Complete)** - Background state machine and UI state triggers.
+* **Phase 3: The Brain (Complete)** - Successfully integrated a local PostgreSQL instance via SQLAlchemy for long-term memory and local Ollama (Llama 3) via `aiohttp` for chatting.
+* **Phase 4: The Eyes & Legs (Planned)** - Add `mss` for screen grabbing, LLaVA for vision, and `QPropertyAnimation` for autonomous screen roaming.
 
-Phase 2: The Engine (Complete) - Background state machine and UI state triggers.
+## Troubleshooting
+* **Crash on Chat**: If the pet crashes when sending a message, ensure the local Ollama service is running.
+* **Database Failure**: If the application fails to connect to the database, ensure your Postgres user has the necessary ownership and permissions for the `pet_db` schema.
 
-Phase 3: The Brain (Up Next) - Integrate a local Ollama REST API (aiohttp) for chatting, and set up a PostgreSQL/SQLAlchemy database for long-term memory.
-
-Phase 4: The Eyes & Legs (Planned) - Add mss for screen grabbing, LLaVA for vision, and QPropertyAnimation for autonomous screen roaming.
-
-Architecture Notes
+## Architecture Notes
 This application strictly prioritizes non-blocking operations. All biological decay and future LLM API calls are handled via QThread or asynchronous workers, communicating with the main GUI thread exclusively through PyQt Signals.
 
 

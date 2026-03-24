@@ -179,6 +179,7 @@ class ChatWidget(QWidget):
         self.worker = AIBrainWorker(msg, self.pet_state)
         self.worker.response_ready.connect(self._on_response)
         self.worker.error_occurred.connect(self._on_error)
+        self.worker.finished.connect(self.worker.deleteLater)
         self.worker.start()
 
     def _on_response(self, response: str):
@@ -192,9 +193,6 @@ class ChatWidget(QWidget):
     def _cleanup_worker(self):
         self.input_field.setEnabled(True)
         self.input_field.setFocus()
-        if self.worker:
-            self.worker.deleteLater()
-            self.worker = None
 
 
 class SpriteAnimator:
@@ -217,7 +215,7 @@ class SpriteAnimator:
         if sprite_sheet.isNull():
             # If the image failed to load, we can create dummy empty pixmaps or log a warning
             print(f"Warning: Could not load sprite sheet from {self.sprite_sheet_path}")
-            # Create a placeholder transparent frame if file not found
+            # Create a placeholder visible frame if file not found
             placeholder = QPixmap(self.frame_width, self.frame_height)
             placeholder.fill(Qt.GlobalColor.blue)
             self.frames = [placeholder] * self.frame_count
