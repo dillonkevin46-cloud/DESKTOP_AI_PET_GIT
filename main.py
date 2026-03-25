@@ -27,15 +27,6 @@ from database import init_db, ChatHistory, MemoryTraits
 # Initialize the global sessionmaker
 SessionLocal = init_db()
 
-# Initialize ChromaDB for RAG
-try:
-    chroma_client = chromadb.PersistentClient(path="./pet_knowledge")
-    knowledge_collection = chroma_client.get_or_create_collection(name="documents")
-except Exception as e:
-    print(f"Warning: Could not initialize ChromaDB. Local knowledge features will be disabled.\nError: {e}")
-    chroma_client = None
-    knowledge_collection = None
-
 DEFAULT_CONFIG = {
     "ollama_url": "http://localhost:11434",
     "chat_model": "llama3",
@@ -229,8 +220,11 @@ class AIBrainWorker(QThread):
         self._save_to_db("user", self.user_message)
 
         # RAG Knowledge Retrieval
-        if knowledge_collection and not self.user_message.startswith("[System:"):
+        if not self.user_message.startswith("[System:"):
             try:
+                chroma_client = chromadb.PersistentClient(path="./pet_knowledge")
+                collection = chroma_client.get_or_create_collection(name="documents")
+
                 # Get embedding for user message
                 embed_url = f"{self.config.get('ollama_url').rstrip('/')}/api/embeddings"
                 embed_payload = {"model": "nomic-embed-text", "prompt": self.user_message}
@@ -244,7 +238,7 @@ class AIBrainWorker(QThread):
                             if user_embedding:
                                 # This query blocks but is fast; to be fully async you'd run in executor,
                                 # but chromadb local is generally fast enough.
-                                results = knowledge_collection.query(
+                                results = collection.query(
                                     query_embeddings=[user_embedding],
                                     n_results=2
                                 )
@@ -343,22 +337,21 @@ class KnowledgeIngestionWorker(QThread):
     extraction_finished = pyqtSignal(str)
     error_occurred = pyqtSignal(str)
 
-    def __init__(self, file_path: str, collection, config: dict):
+    def __init__(self, file_path: str, config: dict):
         super().__init__()
         self.file_path = file_path
-        self.collection = collection
         self.config = config
         self.url = f"{self.config.get('ollama_url').rstrip('/')}/api/embeddings"
         self.embed_model = "nomic-embed-text"
 
     def run(self):
-        if not self.collection:
-            self.error_occurred.emit("Knowledge collection not initialized.")
-            return
         asyncio.run(self.process_file())
 
     async def process_file(self):
         try:
+            chroma_client = chromadb.PersistentClient(path="./pet_knowledge")
+            collection = chroma_client.get_or_create_collection(name="documents")
+
             filename = os.path.basename(self.file_path)
             ext = os.path.splitext(filename)[1].lower()
             text = ""
@@ -418,7 +411,7 @@ class KnowledgeIngestionWorker(QThread):
                             print(f"[DEBUG RAG] Failed to embed chunk {idx} of {filename}: HTTP {response.status}")
 
             if valid_chunks:
-                self.collection.add(
+                collection.add(
                     embeddings=embeddings,
                     documents=valid_chunks,
                     metadatas=[{"filename": filename} for _ in valid_chunks],
@@ -977,7 +970,7 @@ class PetWindow(QWidget):
 
     def dropEvent(self, event):
         if self.ingestion_worker and self.ingestion_worker.isRunning():
-            self.chat_widget.history_display.append("<i><b>System:</b> I'm already reading a file. Please wait!</i>")
+            self.chat_widget.history_display.append("<i><b>System:</b> I am already reading a document!</i>")
             event.ignore()
             return
 
@@ -987,7 +980,7 @@ class PetWindow(QWidget):
                 ext = os.path.splitext(file_path)[1].lower()
                 if ext in ['.pdf', '.docx', '.txt', '.xlsx']:
                     self.chat_widget.history_display.append(f"<i><b>System:</b> Pet is reading {os.path.basename(file_path)}...</i>")
-                    self.ingestion_worker = KnowledgeIngestionWorker(file_path, knowledge_collection, self.config)
+                    self.ingestion_worker = KnowledgeIngestionWorker(file_path, self.config)
                     self.ingestion_worker.extraction_finished.connect(self._on_extraction_finished)
                     self.ingestion_worker.error_occurred.connect(self._on_extraction_error)
                     self.ingestion_worker.finished.connect(self._cleanup_ingestion_worker)
