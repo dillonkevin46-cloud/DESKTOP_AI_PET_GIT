@@ -532,6 +532,7 @@ class PetWindow(QWidget):
         self.autonomy_triggered = False
         self.vision_mode = "manual"
         self.autonomous_worker = None
+        self.walking_to_bowl = False
 
         self._setup_window()
         self._setup_multi_monitor()
@@ -543,17 +544,34 @@ class PetWindow(QWidget):
 
     def _setup_roaming(self):
         self.roam_animation = QPropertyAnimation(self, b"pos")
+        self.roam_animation.finished.connect(self._on_roam_finished)
 
         self.roam_timer = QTimer(self)
         self.roam_timer.timeout.connect(self.wander)
         # Trigger wander every 15 to 30 seconds
         self.roam_timer.start(random.randint(15000, 30000))
 
+    def _on_roam_finished(self):
+        if self.walking_to_bowl:
+            self.state.hunger = 0
+            self.state.current_activity = 'eating'
+            self.change_animation_state('eating')
+            self.roam_timer.stop()
+            self.walking_to_bowl = False
+            QTimer.singleShot(5000, self.finish_eating)
+
+    def finish_eating(self):
+        self.state.current_activity = 'idle'
+        self.change_animation_state('idle')
+        self.roam_timer.start(random.randint(15000, 30000))
+
     def wander(self):
         if self.state.hunger >= 80 and self.food_bowl:
             print("[DEBUG WANDER] Pet is hungry! Walking to the food bowl.")
             target_pos = self.food_bowl.geometry().topLeft()
+            self.walking_to_bowl = True
         else:
+            self.walking_to_bowl = False
             screen = QGuiApplication.screenAt(self.geometry().center())
             if not screen:
                 screen = QGuiApplication.primaryScreen()
@@ -796,8 +814,11 @@ class PetWindow(QWidget):
 
     def _action_feed(self):
         self.state.hunger = 0
+        self.state.current_activity = 'eating'
+        self.change_animation_state('eating')
+        self.roam_timer.stop()
+        QTimer.singleShot(5000, self.finish_eating)
         print("[INTERACTION] You fed the pet. Hunger is now 0.")
-        self.update_pet_state(self.state)
 
     def _action_play(self):
         self.state.boredom = 0
@@ -879,8 +900,9 @@ def main():
 
     sprite_paths = {
         "idle": "idle.gif",
-        "sleeping": "sleep.gif",
-        "hungry": "hungry.gif"
+        "sleeping": "sleeping.gif",
+        "hungry": "hungry.gif",
+        "eating": "eating.gif"
     }
 
     food_bowl = DesktopProp("bowl.png")
