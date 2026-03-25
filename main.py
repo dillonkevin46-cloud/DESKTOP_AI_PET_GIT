@@ -8,6 +8,10 @@ import random
 import json
 import re
 import os
+import chromadb
+import pypdf
+import docx
+import pandas as pd
 from duckduckgo_search import DDGS
 from dataclasses import dataclass
 from PyQt6.QtWidgets import (
@@ -22,6 +26,15 @@ from database import init_db, ChatHistory, MemoryTraits
 
 # Initialize the global sessionmaker
 SessionLocal = init_db()
+
+# Initialize ChromaDB for RAG
+try:
+    chroma_client = chromadb.PersistentClient(path="./pet_knowledge")
+    knowledge_collection = chroma_client.get_or_create_collection(name="documents")
+except Exception as e:
+    print(f"Warning: Could not initialize ChromaDB. Local knowledge features will be disabled.\nError: {e}")
+    chroma_client = None
+    knowledge_collection = None
 
 DEFAULT_CONFIG = {
     "ollama_url": "http://localhost:11434",
@@ -212,11 +225,38 @@ class AIBrainWorker(QThread):
     async def process_message(self):
         messages = self._build_context()
 
-        # Append the new user message
-        messages.append({"role": "user", "content": self.user_message})
-
         # Save user message to DB
         self._save_to_db("user", self.user_message)
+
+        # RAG Knowledge Retrieval
+        if knowledge_collection and not self.user_message.startswith("[System:"):
+            try:
+                # Get embedding for user message
+                embed_url = f"{self.config.get('ollama_url').rstrip('/')}/api/embeddings"
+                embed_payload = {"model": "nomic-embed-text", "prompt": self.user_message}
+
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(embed_url, json=embed_payload, timeout=10) as response:
+                        if response.status == 200:
+                            data = await response.json()
+                            user_embedding = data.get("embedding")
+
+                            if user_embedding:
+                                # This query blocks but is fast; to be fully async you'd run in executor,
+                                # but chromadb local is generally fast enough.
+                                results = knowledge_collection.query(
+                                    query_embeddings=[user_embedding],
+                                    n_results=2
+                                )
+
+                                docs = results.get("documents", [])
+                                if docs and docs[0]:
+                                    rag_context = "Retrieved Local Knowledge:\n"
+                                    for doc in docs[0]:
+                                        rag_context += f"- {doc}\n"
+                                    messages.append({"role": "system", "content": rag_context})
+            except Exception as e:
+                print(f"[DEBUG BRAIN] RAG retrieval failed: {e}")
 
         # Web Search Integration
         if self._needs_web_search(self.user_message):
@@ -229,6 +269,9 @@ class AIBrainWorker(QThread):
                     messages.append({"role": "system", "content": search_context})
             except Exception as e:
                 print(f"[DEBUG BRAIN] DuckDuckGo search failed: {e}")
+
+        # Append the new user message at the very end
+        messages.append({"role": "user", "content": self.user_message})
 
         payload = {
             "model": self.config.get("chat_model"),
@@ -294,6 +337,98 @@ class AIBrainWorker(QThread):
                     db.commit()
             except Exception as e:
                 print(f"Failed to save {role} message to DB: {e}")
+
+class KnowledgeIngestionWorker(QThread):
+    """Background thread that parses and ingests local documents into ChromaDB for RAG."""
+    ingestion_finished = pyqtSignal(str)
+    error_occurred = pyqtSignal(str)
+
+    def __init__(self, file_path: str, config: dict):
+        super().__init__()
+        self.file_path = file_path
+        self.config = config
+        self.url = f"{self.config.get('ollama_url').rstrip('/')}/api/embeddings"
+        self.embed_model = "nomic-embed-text"
+
+    def run(self):
+        if not knowledge_collection:
+            self.error_occurred.emit("Knowledge collection not initialized.")
+            return
+        asyncio.run(self.process_file())
+
+    async def process_file(self):
+        try:
+            filename = os.path.basename(self.file_path)
+            ext = os.path.splitext(filename)[1].lower()
+            text = ""
+
+            if ext == '.txt':
+                with open(self.file_path, 'r', encoding='utf-8') as f:
+                    text = f.read()
+            elif ext == '.pdf':
+                reader = pypdf.PdfReader(self.file_path)
+                for page in reader.pages:
+                    extracted = page.extract_text()
+                    if extracted:
+                        text += extracted + "\n"
+            elif ext == '.docx':
+                doc = docx.Document(self.file_path)
+                text = "\n".join([para.text for para in doc.paragraphs])
+            elif ext == '.xlsx':
+                df = pd.read_excel(self.file_path)
+                text = df.to_string(index=False)
+            else:
+                self.error_occurred.emit(f"Unsupported file type: {ext}")
+                return
+
+            if not text.strip():
+                self.error_occurred.emit(f"No readable text found in {filename}.")
+                return
+
+            # Chunk text roughly by paragraphs or a fixed word count.
+            # Here we chunk by double newlines or arbitrarily if too long.
+            raw_chunks = [c.strip() for c in text.split('\n\n') if c.strip()]
+
+            chunks = []
+            for rc in raw_chunks:
+                words = rc.split()
+                for i in range(0, len(words), 500):
+                    chunks.append(" ".join(words[i:i+500]))
+
+            embeddings = []
+            valid_chunks = []
+            ids = []
+
+            async with aiohttp.ClientSession() as session:
+                for idx, chunk in enumerate(chunks):
+                    payload = {
+                        "model": self.embed_model,
+                        "prompt": chunk
+                    }
+                    async with session.post(self.url, json=payload, timeout=60) as response:
+                        if response.status == 200:
+                            data = await response.json()
+                            embedding = data.get("embedding")
+                            if embedding:
+                                embeddings.append(embedding)
+                                valid_chunks.append(chunk)
+                                ids.append(f"{filename}_{idx}")
+                        else:
+                            print(f"[DEBUG RAG] Failed to embed chunk {idx} of {filename}: HTTP {response.status}")
+
+            if valid_chunks:
+                knowledge_collection.add(
+                    embeddings=embeddings,
+                    documents=valid_chunks,
+                    metadatas=[{"filename": filename} for _ in valid_chunks],
+                    ids=ids
+                )
+                self.ingestion_finished.emit(f"I have finished reading {filename}!")
+            else:
+                self.error_occurred.emit(f"Failed to generate any embeddings for {filename}.")
+
+        except Exception as e:
+            self.error_occurred.emit(f"Error processing {os.path.basename(self.file_path)}: {e}")
 
 class MemoryExtractionWorker(QThread):
     """Background thread that extracts new memory traits from recent chat history."""
@@ -533,6 +668,9 @@ class PetWindow(QWidget):
         self.vision_mode = "manual"
         self.autonomous_worker = None
         self.walking_to_bowl = False
+        self.ingestion_workers = []
+
+        self.setAcceptDrops(True)
 
         self._setup_window()
         self._setup_multi_monitor()
@@ -829,6 +967,41 @@ class PetWindow(QWidget):
         self.state.current_activity = 'sleeping'
         print("[INTERACTION] You put the pet to sleep.")
         self.update_pet_state(self.state)
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.accept()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event):
+        for url in event.mimeData().urls():
+            file_path = url.toLocalFile()
+            if os.path.exists(file_path):
+                ext = os.path.splitext(file_path)[1].lower()
+                if ext in ['.pdf', '.docx', '.txt', '.xlsx']:
+                    self.chat_widget.history_display.append(f"<i><b>System:</b> Pet is reading {os.path.basename(file_path)}...</i>")
+                    worker = KnowledgeIngestionWorker(file_path, self.config)
+                    worker.ingestion_finished.connect(self._on_ingestion_finished)
+                    worker.error_occurred.connect(self._on_ingestion_error)
+                    worker.finished.connect(lambda w=worker: self._cleanup_ingestion_worker(w))
+                    self.ingestion_workers.append(worker)
+                    worker.start()
+                else:
+                    self.chat_widget.history_display.append(f"<i><b>System:</b> Cannot read {ext} files. Only .pdf, .docx, .txt, .xlsx supported.</i>")
+
+    def _on_ingestion_finished(self, msg: str):
+        pet_name = self.config.get("pet_name", "Pet")
+        self.chat_widget.history_display.append(f"<b>{pet_name}:</b> {msg}")
+        self.chat_widget.show()
+
+    def _on_ingestion_error(self, msg: str):
+        self.chat_widget.history_display.append(f"<i><span style='color:red;'>System:</span> {msg}</i>")
+
+    def _cleanup_ingestion_worker(self, worker):
+        if worker in self.ingestion_workers:
+            self.ingestion_workers.remove(worker)
+        worker.deleteLater()
 
     def toggle_chat(self):
         if self.chat_widget.isVisible():
