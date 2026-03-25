@@ -340,18 +340,19 @@ class AIBrainWorker(QThread):
 
 class KnowledgeIngestionWorker(QThread):
     """Background thread that parses and ingests local documents into ChromaDB for RAG."""
-    ingestion_finished = pyqtSignal(str)
+    extraction_finished = pyqtSignal(str)
     error_occurred = pyqtSignal(str)
 
-    def __init__(self, file_path: str, config: dict):
+    def __init__(self, file_path: str, collection, config: dict):
         super().__init__()
         self.file_path = file_path
+        self.collection = collection
         self.config = config
         self.url = f"{self.config.get('ollama_url').rstrip('/')}/api/embeddings"
         self.embed_model = "nomic-embed-text"
 
     def run(self):
-        if not knowledge_collection:
+        if not self.collection:
             self.error_occurred.emit("Knowledge collection not initialized.")
             return
         asyncio.run(self.process_file())
@@ -392,8 +393,8 @@ class KnowledgeIngestionWorker(QThread):
             chunks = []
             for rc in raw_chunks:
                 words = rc.split()
-                for i in range(0, len(words), 500):
-                    chunks.append(" ".join(words[i:i+500]))
+                for i in range(0, len(words), 200):
+                    chunks.append(" ".join(words[i:i+200]))
 
             embeddings = []
             valid_chunks = []
@@ -417,13 +418,13 @@ class KnowledgeIngestionWorker(QThread):
                             print(f"[DEBUG RAG] Failed to embed chunk {idx} of {filename}: HTTP {response.status}")
 
             if valid_chunks:
-                knowledge_collection.add(
+                self.collection.add(
                     embeddings=embeddings,
                     documents=valid_chunks,
                     metadatas=[{"filename": filename} for _ in valid_chunks],
                     ids=ids
                 )
-                self.ingestion_finished.emit(f"I have finished reading {filename}!")
+                self.extraction_finished.emit(f"I have finished reading {filename}!")
             else:
                 self.error_occurred.emit(f"Failed to generate any embeddings for {filename}.")
 
@@ -668,7 +669,7 @@ class PetWindow(QWidget):
         self.vision_mode = "manual"
         self.autonomous_worker = None
         self.walking_to_bowl = False
-        self.ingestion_workers = []
+        self.ingestion_worker = None
 
         self.setAcceptDrops(True)
 
@@ -975,33 +976,38 @@ class PetWindow(QWidget):
             event.ignore()
 
     def dropEvent(self, event):
+        if self.ingestion_worker and self.ingestion_worker.isRunning():
+            self.chat_widget.history_display.append("<i><b>System:</b> I'm already reading a file. Please wait!</i>")
+            event.ignore()
+            return
+
         for url in event.mimeData().urls():
             file_path = url.toLocalFile()
             if os.path.exists(file_path):
                 ext = os.path.splitext(file_path)[1].lower()
                 if ext in ['.pdf', '.docx', '.txt', '.xlsx']:
                     self.chat_widget.history_display.append(f"<i><b>System:</b> Pet is reading {os.path.basename(file_path)}...</i>")
-                    worker = KnowledgeIngestionWorker(file_path, self.config)
-                    worker.ingestion_finished.connect(self._on_ingestion_finished)
-                    worker.error_occurred.connect(self._on_ingestion_error)
-                    worker.finished.connect(lambda w=worker: self._cleanup_ingestion_worker(w))
-                    self.ingestion_workers.append(worker)
-                    worker.start()
+                    self.ingestion_worker = KnowledgeIngestionWorker(file_path, knowledge_collection, self.config)
+                    self.ingestion_worker.extraction_finished.connect(self._on_extraction_finished)
+                    self.ingestion_worker.error_occurred.connect(self._on_extraction_error)
+                    self.ingestion_worker.finished.connect(self._cleanup_ingestion_worker)
+                    self.ingestion_worker.start()
+                    break # Process only the first valid file for simplicity
                 else:
                     self.chat_widget.history_display.append(f"<i><b>System:</b> Cannot read {ext} files. Only .pdf, .docx, .txt, .xlsx supported.</i>")
 
-    def _on_ingestion_finished(self, msg: str):
+    def _on_extraction_finished(self, msg: str):
         pet_name = self.config.get("pet_name", "Pet")
         self.chat_widget.history_display.append(f"<b>{pet_name}:</b> {msg}")
         self.chat_widget.show()
 
-    def _on_ingestion_error(self, msg: str):
+    def _on_extraction_error(self, msg: str):
         self.chat_widget.history_display.append(f"<i><span style='color:red;'>System:</span> {msg}</i>")
 
-    def _cleanup_ingestion_worker(self, worker):
-        if worker in self.ingestion_workers:
-            self.ingestion_workers.remove(worker)
-        worker.deleteLater()
+    def _cleanup_ingestion_worker(self):
+        if self.ingestion_worker:
+            self.ingestion_worker.deleteLater()
+            self.ingestion_worker = None
 
     def toggle_chat(self):
         if self.chat_widget.isVisible():
