@@ -102,6 +102,48 @@ class SettingsDialog(QDialog):
         save_settings(self.config)
         self.accept()
 
+class DesktopProp(QWidget):
+    """A frameless, draggable desktop prop (e.g., a food bowl)."""
+    def __init__(self, image_path: str):
+        super().__init__()
+
+        self.setWindowFlags(
+            Qt.WindowType.FramelessWindowHint |
+            Qt.WindowType.WindowStaysOnTopHint |
+            Qt.WindowType.Tool
+        )
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+
+        self.drag_position = QPoint()
+
+        self.layout = QVBoxLayout(self)
+        self.layout.setContentsMargins(0, 0, 0, 0)
+
+        self.image_label = QLabel(self)
+        self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        pixmap = QPixmap(image_path)
+        if pixmap.isNull():
+            print(f"Warning: Could not load prop image from {image_path}")
+            pixmap = QPixmap(64, 64)
+            pixmap.fill(Qt.GlobalColor.magenta)
+        else:
+            pixmap = pixmap.scaled(64, 64, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+
+        self.image_label.setPixmap(pixmap)
+        self.layout.addWidget(self.image_label)
+        self.resize(pixmap.size())
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.drag_position = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+            event.accept()
+
+    def mouseMoveEvent(self, event):
+        if event.buttons() == Qt.MouseButton.LeftButton:
+            self.move(event.globalPosition().toPoint() - self.drag_position)
+            event.accept()
+
 @dataclass
 class PetState:
     hunger: int = 0
@@ -473,11 +515,12 @@ class ChatWidget(QWidget):
 
 class PetWindow(QWidget):
     """The main transparent, frameless window for the virtual pet."""
-    def __init__(self, sprite_paths: dict[str, str]):
+    def __init__(self, sprite_paths: dict[str, str], food_bowl: DesktopProp = None):
         super().__init__()
 
         self.config = load_settings()
         self.sprite_paths = sprite_paths
+        self.food_bowl = food_bowl
         self.drag_position = QPoint()
         self.total_screen_geometry = QRect()
 
@@ -507,35 +550,39 @@ class PetWindow(QWidget):
         self.roam_timer.start(random.randint(15000, 30000))
 
     def wander(self):
-        screen = QGuiApplication.screenAt(self.geometry().center())
-        if not screen:
-            screen = QGuiApplication.primaryScreen()
-
-        screen_geo = screen.availableGeometry()
-
-        # Calculate random position within the current screen's available geometry
-        min_x = screen_geo.left()
-        max_x = screen_geo.right() - self.width()
-
-        min_y = screen_geo.top()
-        max_y = screen_geo.bottom() - self.height()
-
-        print(f"[DEBUG WANDER] Pet dimensions: {self.width()}x{self.height()}")
-        print(f"[DEBUG WANDER] Screen: {screen.name()} | Available Geo: {screen_geo}")
-        print(f"[DEBUG WANDER] X Range: {min_x} to {max_x} | Y Range: {min_y} to {max_y}")
-
-        if max_x <= min_x or max_y <= min_y:
-            print("[WARNING] Invalid screen geometry boundaries. Forcing target_pos to (100, 100).")
-            target_pos = QPoint(100, 100)
+        if self.state.hunger >= 80 and self.food_bowl:
+            print("[DEBUG WANDER] Pet is hungry! Walking to the food bowl.")
+            target_pos = self.food_bowl.geometry().topLeft()
         else:
-            target_x = random.randint(min_x, max_x)
-            if self.config.get("lock_to_taskbar", True):
-                target_y = max_y
-            else:
-                target_y = random.randint(min_y, max_y)
-            target_pos = QPoint(target_x, target_y)
+            screen = QGuiApplication.screenAt(self.geometry().center())
+            if not screen:
+                screen = QGuiApplication.primaryScreen()
 
-        print(f"[DEBUG WANDER] Calculated target_pos: ({target_pos.x()}, {target_pos.y()})")
+            screen_geo = screen.availableGeometry()
+
+            # Calculate random position within the current screen's available geometry
+            min_x = screen_geo.left()
+            max_x = screen_geo.right() - self.width()
+
+            min_y = screen_geo.top()
+            max_y = screen_geo.bottom() - self.height()
+
+            print(f"[DEBUG WANDER] Pet dimensions: {self.width()}x{self.height()}")
+            print(f"[DEBUG WANDER] Screen: {screen.name()} | Available Geo: {screen_geo}")
+            print(f"[DEBUG WANDER] X Range: {min_x} to {max_x} | Y Range: {min_y} to {max_y}")
+
+            if max_x <= min_x or max_y <= min_y:
+                print("[WARNING] Invalid screen geometry boundaries. Forcing target_pos to (100, 100).")
+                target_pos = QPoint(100, 100)
+            else:
+                target_x = random.randint(min_x, max_x)
+                if self.config.get("lock_to_taskbar", True):
+                    target_y = max_y
+                else:
+                    target_y = random.randint(min_y, max_y)
+                target_pos = QPoint(target_x, target_y)
+
+            print(f"[DEBUG WANDER] Calculated target_pos: ({target_pos.x()}, {target_pos.y()})")
 
         self.roam_animation.setDuration(random.randint(3000, 5000))
         self.roam_animation.setEndValue(target_pos)
@@ -836,8 +883,11 @@ def main():
         "hungry": "hungry.gif"
     }
 
-    pet = PetWindow(sprite_paths)
+    food_bowl = DesktopProp("bowl.png")
+
+    pet = PetWindow(sprite_paths, food_bowl=food_bowl)
     pet.show()
+    food_bowl.show()
 
     sys.exit(app.exec())
 
