@@ -82,7 +82,44 @@ class AIBrainWorker(QThread):
         self.url = f"{self.config.get('ollama_url').rstrip('/')}/api/chat"
 
     def run(self):
-        asyncio.run(self.process_message())
+        # 1. Async: Fetch embedding
+        query_emb = asyncio.run(self.fetch_embedding())
+        kb_context = ""
+
+        # 2. Sync: ChromaDB (Completely outside asyncio!)
+        if query_emb:
+            try:
+                logging.debug("Waiting to acquire CHROMA_LOCK for query...")
+                with CHROMA_LOCK:
+                    logging.debug("CHROMA_LOCK acquired. Clearing system cache...")
+                    chromadb.api.client.SharedSystemClient.clear_system_cache()
+
+                    logging.debug("Initializing PersistentClient...")
+                    client = chromadb.PersistentClient(path="./pet_knowledge")
+
+                    logging.debug("Getting collection...")
+                    collection = client.get_or_create_collection(name="documents")
+
+                    logging.debug("Executing DB operation...")
+                    results = collection.query(query_embeddings=[query_emb], n_results=2)
+
+                    if results and results.get('documents') and results['documents'][0]:
+                        kb_context = "Retrieved Local Knowledge:\n"
+                        for doc in results['documents'][0]:
+                            kb_context += f"- {doc}\n"
+
+                    logging.debug("Deleting collection and client references...")
+                    del collection
+                    del client
+
+                    logging.debug("Clearing system cache again...")
+                    chromadb.api.client.SharedSystemClient.clear_system_cache()
+                logging.debug("CHROMA_LOCK released.")
+            except Exception as e:
+                logging.error(f"ChromaDB Query Error: {e}")
+
+        # 3. Async: Execute LLM
+        asyncio.run(self.execute_llm(kb_context))
 
     def _needs_web_search(self, msg: str) -> bool:
         if msg.startswith("[System:"):
@@ -91,61 +128,31 @@ class AIBrainWorker(QThread):
         keywords = ["what is", "who is", "search for", "weather", "news", "current event", "tell me about"]
         return any(keyword in lower_msg for keyword in keywords)
 
-    async def process_message(self):
+    async def fetch_embedding(self):
+        if self.user_message.startswith("[System:"):
+            return None
+
+        try:
+            embed_url = f"{self.config.get('ollama_url').rstrip('/')}/api/embeddings"
+            embed_payload = {"model": "nomic-embed-text", "prompt": self.user_message}
+
+            async with aiohttp.ClientSession() as session:
+                async with session.post(embed_url, json=embed_payload, timeout=10) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        return data.get("embedding")
+        except Exception as e:
+            logging.error(f"[DEBUG BRAIN] Embedding fetch failed: {e}")
+        return None
+
+    async def execute_llm(self, kb_context: str):
         messages = self._build_context()
 
         # Save user message to DB
         self._save_to_db("user", self.user_message)
 
-        # RAG Knowledge Retrieval
-        if not self.user_message.startswith("[System:"):
-            try:
-                # Get embedding for user message
-                embed_url = f"{self.config.get('ollama_url').rstrip('/')}/api/embeddings"
-                embed_payload = {"model": "nomic-embed-text", "prompt": self.user_message}
-
-                async with aiohttp.ClientSession() as session:
-                    async with session.post(embed_url, json=embed_payload, timeout=10) as response:
-                        if response.status == 200:
-                            data = await response.json()
-                            user_embedding = data.get("embedding")
-
-                            if user_embedding:
-                                logging.debug("Waiting to acquire CHROMA_LOCK...")
-                                with CHROMA_LOCK:
-                                    logging.debug("CHROMA_LOCK acquired. Clearing system cache...")
-                                    chromadb.api.client.SharedSystemClient.clear_system_cache()
-
-                                    logging.debug("Initializing PersistentClient...")
-                                    chroma_client = chromadb.PersistentClient(path="./pet_knowledge")
-
-                                    logging.debug("Getting collection...")
-                                    collection = chroma_client.get_or_create_collection(name="documents")
-
-                                    logging.debug("Executing DB operation...")
-                                    # This query blocks but is fast; to be fully async you'd run in executor,
-                                    # but chromadb local is generally fast enough.
-                                    results = collection.query(
-                                        query_embeddings=[user_embedding],
-                                        n_results=2
-                                    )
-
-                                    logging.debug("Deleting collection and client references...")
-                                    del collection
-                                    del chroma_client
-
-                                    logging.debug("Clearing system cache again...")
-                                    chromadb.api.client.SharedSystemClient.clear_system_cache()
-                                logging.debug("CHROMA_LOCK released.")
-
-                                docs = results.get("documents", [])
-                                if docs and docs[0]:
-                                    rag_context = "Retrieved Local Knowledge:\n"
-                                    for doc in docs[0]:
-                                        rag_context += f"- {doc}\n"
-                                    messages.append({"role": "system", "content": rag_context})
-            except Exception as e:
-                print(f"[DEBUG BRAIN] RAG retrieval failed: {e}")
+        if kb_context:
+            messages.append({"role": "system", "content": kb_context})
 
         # Web Search Integration
         if self._needs_web_search(self.user_message):
@@ -241,9 +248,51 @@ class KnowledgeIngestionWorker(QThread):
         self.embed_model = "nomic-embed-text"
 
     def run(self):
-        asyncio.run(self.process_file())
+        result = asyncio.run(self.parse_and_embed_file())
+        if not result:
+            return
 
-    async def process_file(self):
+        chunks, embeddings, filename = result
+
+        if chunks and embeddings:
+            try:
+                logging.debug("Waiting to acquire CHROMA_LOCK for ingestion...")
+                with CHROMA_LOCK:
+                    logging.debug("CHROMA_LOCK acquired. Clearing system cache...")
+                    chromadb.api.client.SharedSystemClient.clear_system_cache()
+
+                    logging.debug("Initializing PersistentClient...")
+                    chroma_client = chromadb.PersistentClient(path="./pet_knowledge")
+
+                    logging.debug("Getting collection...")
+                    collection = chroma_client.get_or_create_collection(name="documents")
+
+                    ids = [f"{filename}_{idx}" for idx in range(len(chunks))]
+
+                    logging.debug("Executing DB operation...")
+                    collection.add(
+                        embeddings=embeddings,
+                        documents=chunks,
+                        metadatas=[{"filename": filename} for _ in chunks],
+                        ids=ids
+                    )
+
+                    logging.debug("Deleting collection and client references...")
+                    del collection
+                    del chroma_client
+
+                    logging.debug("Clearing system cache again...")
+                    chromadb.api.client.SharedSystemClient.clear_system_cache()
+                logging.debug("CHROMA_LOCK released.")
+
+                self.extraction_finished.emit(f"I have finished reading {filename}!")
+            except Exception as e:
+                self.error_occurred.emit(f"ChromaDB Ingestion Error: {e}")
+                logging.error(f"ChromaDB Ingestion Error: {e}")
+        else:
+            self.error_occurred.emit(f"Failed to generate any embeddings for {filename}.")
+
+    async def parse_and_embed_file(self):
         try:
             filename = os.path.basename(self.file_path)
             ext = os.path.splitext(filename)[1].lower()
@@ -266,11 +315,11 @@ class KnowledgeIngestionWorker(QThread):
                 text = df.to_string(index=False)
             else:
                 self.error_occurred.emit(f"Unsupported file type: {ext}")
-                return
+                return None
 
             if not text.strip():
                 self.error_occurred.emit(f"No readable text found in {filename}.")
-                return
+                return None
 
             # Chunk text roughly by paragraphs or a fixed word count.
             # Here we chunk by double newlines or arbitrarily if too long.
@@ -284,7 +333,6 @@ class KnowledgeIngestionWorker(QThread):
 
             embeddings = []
             valid_chunks = []
-            ids = []
 
             async with aiohttp.ClientSession() as session:
                 for idx, chunk in enumerate(chunks):
@@ -299,44 +347,14 @@ class KnowledgeIngestionWorker(QThread):
                             if embedding:
                                 embeddings.append(embedding)
                                 valid_chunks.append(chunk)
-                                ids.append(f"{filename}_{idx}")
                         else:
                             print(f"[DEBUG RAG] Failed to embed chunk {idx} of {filename}: HTTP {response.status}")
 
-            if valid_chunks:
-                logging.debug("Waiting to acquire CHROMA_LOCK...")
-                with CHROMA_LOCK:
-                    logging.debug("CHROMA_LOCK acquired. Clearing system cache...")
-                    chromadb.api.client.SharedSystemClient.clear_system_cache()
-
-                    logging.debug("Initializing PersistentClient...")
-                    chroma_client = chromadb.PersistentClient(path="./pet_knowledge")
-
-                    logging.debug("Getting collection...")
-                    collection = chroma_client.get_or_create_collection(name="documents")
-
-                    logging.debug("Executing DB operation...")
-                    collection.add(
-                        embeddings=embeddings,
-                        documents=valid_chunks,
-                        metadatas=[{"filename": filename} for _ in valid_chunks],
-                        ids=ids
-                    )
-
-                    logging.debug("Deleting collection and client references...")
-                    del collection
-                    del chroma_client
-
-                    logging.debug("Clearing system cache again...")
-                    chromadb.api.client.SharedSystemClient.clear_system_cache()
-                logging.debug("CHROMA_LOCK released.")
-
-                self.extraction_finished.emit(f"I have finished reading {filename}!")
-            else:
-                self.error_occurred.emit(f"Failed to generate any embeddings for {filename}.")
+            return valid_chunks, embeddings, filename
 
         except Exception as e:
             self.error_occurred.emit(f"Error processing {os.path.basename(self.file_path)}: {e}")
+            return None
 
 
 class MemoryExtractionWorker(QThread):
