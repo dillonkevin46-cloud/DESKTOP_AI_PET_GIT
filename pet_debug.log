@@ -1,2 +1,89 @@
 2026-03-26 05:39:26,825 - [MainThread] - INFO - === APPLICATION STARTED ===
 2026-03-26 07:04:09,424 - [MainThread] - INFO - === APPLICATION STARTED ===
+2026-03-26 07:22:11,110 - [MainThread] - INFO - === APPLICATION STARTED ===
+2026-03-26 07:22:11,111 - [MainThread] - ERROR - Uncaught exception
+Traceback (most recent call last):
+  File "/app/main.py", line 33, in <module>
+    from PyQt6.QtWidgets import QApplication
+ModuleNotFoundError: No module named 'PyQt6'
+2026-03-26 07:22:22,306 - [MainThread] - INFO - === APPLICATION STARTED ===
+2026-03-26 07:22:22,306 - [MainThread] - ERROR - Uncaught exception
+Traceback (most recent call last):
+  File "/app/main.py", line 33, in <module>
+    from PyQt6.QtWidgets import QApplication
+ModuleNotFoundError: No module named 'PyQt6'
+2026-03-26 07:22:28,842 - [MainThread] - INFO - === APPLICATION STARTED ===
+2026-03-26 07:22:28,843 - [MainThread] - ERROR - Uncaught exception
+Traceback (most recent call last):
+  File "/app/main.py", line 33, in <module>
+    from PyQt6.QtWidgets import QApplication
+ModuleNotFoundError: No module named 'PyQt6'
+2026-03-26 07:23:41,833 - [MainThread] - INFO - === APPLICATION STARTED ===
+2026-03-26 07:23:43,424 - [MainThread] - ERROR - Uncaught exception
+Traceback (most recent call last):
+  File "/app/main.py", line 34, in <module>
+    from ui_components import DesktopProp
+  File "/app/ui_components.py", line 11, in <module>
+    from workers import AIBrainWorker, PetState
+  File "/app/workers.py", line 22, in <module>
+    SessionLocal = init_db()
+                   ^^^^^^^^^
+  File "/app/database.py", line 25, in init_db
+    engine = create_engine(db_url)
+             ^^^^^^^^^^^^^^^^^^^^^
+  File "<string>", line 2, in create_engine
+  File "/home/jules/.pyenv/versions/3.12.13/lib/python3.12/site-packages/sqlalchemy/util/deprecations.py", line 281, in warned
+    return fn(*args, **kwargs)  # type: ignore[no-any-return]
+           ^^^^^^^^^^^^^^^^^^^
+  File "/home/jules/.pyenv/versions/3.12.13/lib/python3.12/site-packages/sqlalchemy/engine/create.py", line 617, in create_engine
+    dbapi = dbapi_meth(**dbapi_args)
+            ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/jules/.pyenv/versions/3.12.13/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/psycopg2.py", line 696, in import_dbapi
+    import psycopg2
+ModuleNotFoundError: No module named 'psycopg2'
+2026-03-26 07:23:54,370 - [MainThread] - INFO - === APPLICATION STARTED ===
+2026-03-26 07:23:55,640 - [MainThread] - ERROR - Uncaught exception
+Traceback (most recent call last):
+  File "/app/main.py", line 34, in <module>
+    from ui_components import DesktopProp
+  File "/app/ui_components.py", line 11, in <module>
+    from workers import AIBrainWorker, PetState
+  File "/app/workers.py", line 22, in <module>
+    SessionLocal = init_db()
+                   ^^^^^^^^^
+  File "/app/database.py", line 25, in init_db
+    engine = create_engine(db_url)
+             ^^^^^^^^^^^^^^^^^^^^^
+  File "<string>", line 2, in create_engine
+  File "/home/jules/.pyenv/versions/3.12.13/lib/python3.12/site-packages/sqlalchemy/util/deprecations.py", line 281, in warned
+    return fn(*args, **kwargs)  # type: ignore[no-any-return]
+           ^^^^^^^^^^^^^^^^^^^
+  File "/home/jules/.pyenv/versions/3.12.13/lib/python3.12/site-packages/sqlalchemy/engine/create.py", line 617, in create_engine
+    dbapi = dbapi_meth(**dbapi_args)
+            ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/jules/.pyenv/versions/3.12.13/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/psycopg2.py", line 696, in import_dbapi
+    import psycopg2
+ModuleNotFoundError: No module named 'psycopg2'
+2026-03-26 07:24:18,802 - [MainThread] - INFO - === APPLICATION STARTED ===
+2026-03-26 07:24:20,017 - [MainThread] - ERROR - Uncaught exception
+Traceback (most recent call last):
+  File "/app/main.py", line 34, in <module>
+    from ui_components import DesktopProp
+  File "/app/ui_components.py", line 11, in <module>
+    from workers import AIBrainWorker, PetState
+  File "/app/workers.py", line 22, in <module>
+    SessionLocal = init_db()
+                   ^^^^^^^^^
+  File "/app/database.py", line 25, in init_db
+    engine = create_engine(db_url)
+             ^^^^^^^^^^^^^^^^^^^^^
+  File "<string>", line 2, in create_engine
+  File "/home/jules/.pyenv/versions/3.12.13/lib/python3.12/site-packages/sqlalchemy/util/deprecations.py", line 281, in warned
+    return fn(*args, **kwargs)  # type: ignore[no-any-return]
+           ^^^^^^^^^^^^^^^^^^^
+  File "/home/jules/.pyenv/versions/3.12.13/lib/python3.12/site-packages/sqlalchemy/engine/create.py", line 617, in create_engine
+    dbapi = dbapi_meth(**dbapi_args)
+            ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/jules/.pyenv/versions/3.12.13/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/psycopg2.py", line 696, in import_dbapi
+    import psycopg2
+ModuleNotFoundError: No module named 'psycopg2'
