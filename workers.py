@@ -1,5 +1,6 @@
 import threading
 import time
+import logging
 import asyncio
 import aiohttp
 import mss
@@ -110,11 +111,18 @@ class AIBrainWorker(QThread):
                             user_embedding = data.get("embedding")
 
                             if user_embedding:
+                                logging.debug("Waiting to acquire CHROMA_LOCK...")
                                 with CHROMA_LOCK:
+                                    logging.debug("CHROMA_LOCK acquired. Clearing system cache...")
                                     chromadb.api.client.SharedSystemClient.clear_system_cache()
+
+                                    logging.debug("Initializing PersistentClient...")
                                     chroma_client = chromadb.PersistentClient(path="./pet_knowledge")
+
+                                    logging.debug("Getting collection...")
                                     collection = chroma_client.get_or_create_collection(name="documents")
 
+                                    logging.debug("Executing DB operation...")
                                     # This query blocks but is fast; to be fully async you'd run in executor,
                                     # but chromadb local is generally fast enough.
                                     results = collection.query(
@@ -122,9 +130,13 @@ class AIBrainWorker(QThread):
                                         n_results=2
                                     )
 
+                                    logging.debug("Deleting collection and client references...")
                                     del collection
                                     del chroma_client
+
+                                    logging.debug("Clearing system cache again...")
                                     chromadb.api.client.SharedSystemClient.clear_system_cache()
+                                logging.debug("CHROMA_LOCK released.")
 
                                 docs = results.get("documents", [])
                                 if docs and docs[0]:
@@ -292,11 +304,18 @@ class KnowledgeIngestionWorker(QThread):
                             print(f"[DEBUG RAG] Failed to embed chunk {idx} of {filename}: HTTP {response.status}")
 
             if valid_chunks:
+                logging.debug("Waiting to acquire CHROMA_LOCK...")
                 with CHROMA_LOCK:
+                    logging.debug("CHROMA_LOCK acquired. Clearing system cache...")
                     chromadb.api.client.SharedSystemClient.clear_system_cache()
+
+                    logging.debug("Initializing PersistentClient...")
                     chroma_client = chromadb.PersistentClient(path="./pet_knowledge")
+
+                    logging.debug("Getting collection...")
                     collection = chroma_client.get_or_create_collection(name="documents")
 
+                    logging.debug("Executing DB operation...")
                     collection.add(
                         embeddings=embeddings,
                         documents=valid_chunks,
@@ -304,9 +323,13 @@ class KnowledgeIngestionWorker(QThread):
                         ids=ids
                     )
 
+                    logging.debug("Deleting collection and client references...")
                     del collection
                     del chroma_client
+
+                    logging.debug("Clearing system cache again...")
                     chromadb.api.client.SharedSystemClient.clear_system_cache()
+                logging.debug("CHROMA_LOCK released.")
 
                 self.extraction_finished.emit(f"I have finished reading {filename}!")
             else:
