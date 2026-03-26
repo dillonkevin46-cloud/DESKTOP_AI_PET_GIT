@@ -134,7 +134,7 @@ class AIBrainWorker(QThread):
         # 2. Sync: SimpleVectorDB
         if query_emb:
             try:
-                results = SimpleVectorDB().query(query_emb, top_k=2)
+                results = SimpleVectorDB().query(query_emb, top_k=4)
                 if results:
                     kb_context = "Retrieved Local Knowledge:\n"
                     for doc in results:
@@ -179,7 +179,7 @@ class AIBrainWorker(QThread):
             messages.append({"role": "system", "content": kb_context})
 
         # Web Search Integration
-        if self._needs_web_search(self.user_message):
+        if not kb_context and self._needs_web_search(self.user_message):
             try:
                 results = DDGS().text(self.user_message, max_results=3)
                 if results:
