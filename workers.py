@@ -9,8 +9,7 @@ import random
 import json
 import re
 import os
-import chromadb
-import chromadb.api.client
+import numpy as np
 import pypdf
 import docx
 import pandas as pd
@@ -22,7 +21,53 @@ from database import init_db, ChatHistory, MemoryTraits
 
 SessionLocal = init_db()
 
-CHROMA_LOCK = threading.Lock()
+DB_LOCK = threading.Lock()
+
+class SimpleVectorDB:
+    def __init__(self, path="pet_vectors.json"):
+        self.path = path
+
+    def _load(self):
+        if os.path.exists(self.path):
+            try:
+                with open(self.path, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            except Exception as e:
+                import logging
+                logging.error(f"Failed to load DB: {e}")
+                return []
+        return []
+
+    def _save(self, data):
+        with open(self.path, 'w', encoding='utf-8') as f:
+            json.dump(data, f)
+
+    def add(self, chunks, embeddings, source):
+        with DB_LOCK:
+            data = self._load()
+            for c, e in zip(chunks, embeddings):
+                data.append({"chunk": c, "embedding": e, "source": source})
+            self._save(data)
+
+    def query(self, query_emb, top_k=2):
+        with DB_LOCK:
+            data = self._load()
+            if not data:
+                return []
+            q = np.array(query_emb)
+            scores = []
+            for item in data:
+                emb = np.array(item["embedding"])
+                norm_q = np.linalg.norm(q)
+                norm_emb = np.linalg.norm(emb)
+                if norm_q == 0 or norm_emb == 0:
+                    sim = 0
+                else:
+                    sim = np.dot(q, emb) / (norm_q * norm_emb)
+                scores.append((sim, item["chunk"]))
+
+            scores.sort(key=lambda x: x[0], reverse=True)
+            return [x[1] for x in scores[:top_k]]
 
 @dataclass
 class PetState:
@@ -86,37 +131,16 @@ class AIBrainWorker(QThread):
         query_emb = asyncio.run(self.fetch_embedding())
         kb_context = ""
 
-        # 2. Sync: ChromaDB (Completely outside asyncio!)
+        # 2. Sync: SimpleVectorDB
         if query_emb:
             try:
-                logging.debug("Waiting to acquire CHROMA_LOCK for query...")
-                with CHROMA_LOCK:
-                    logging.debug("CHROMA_LOCK acquired. Clearing system cache...")
-                    chromadb.api.client.SharedSystemClient.clear_system_cache()
-
-                    logging.debug("Initializing PersistentClient...")
-                    client = chromadb.PersistentClient(path="./pet_knowledge")
-
-                    logging.debug("Getting collection...")
-                    collection = client.get_or_create_collection(name="documents")
-
-                    logging.debug("Executing DB operation...")
-                    results = collection.query(query_embeddings=[query_emb], n_results=2)
-
-                    if results and results.get('documents') and results['documents'][0]:
-                        kb_context = "Retrieved Local Knowledge:\n"
-                        for doc in results['documents'][0]:
-                            kb_context += f"- {doc}\n"
-
-                    logging.debug("Deleting collection and client references...")
-                    del collection
-                    del client
-
-                    logging.debug("Clearing system cache again...")
-                    chromadb.api.client.SharedSystemClient.clear_system_cache()
-                logging.debug("CHROMA_LOCK released.")
+                results = SimpleVectorDB().query(query_emb, top_k=2)
+                if results:
+                    kb_context = "Retrieved Local Knowledge:\n"
+                    for doc in results:
+                        kb_context += f"- {doc}\n"
             except Exception as e:
-                logging.error(f"ChromaDB Query Error: {e}")
+                logging.error(f"SimpleVectorDB Query Error: {e}")
 
         # 3. Async: Execute LLM
         asyncio.run(self.execute_llm(kb_context))
@@ -236,7 +260,7 @@ class AIBrainWorker(QThread):
 
 
 class KnowledgeIngestionWorker(QThread):
-    """Background thread that parses and ingests local documents into ChromaDB for RAG."""
+    """Background thread that parses and ingests local documents into Vector DB for RAG."""
     extraction_finished = pyqtSignal(str)
     error_occurred = pyqtSignal(str)
 
@@ -256,39 +280,11 @@ class KnowledgeIngestionWorker(QThread):
 
         if chunks and embeddings:
             try:
-                logging.debug("Waiting to acquire CHROMA_LOCK for ingestion...")
-                with CHROMA_LOCK:
-                    logging.debug("CHROMA_LOCK acquired. Clearing system cache...")
-                    chromadb.api.client.SharedSystemClient.clear_system_cache()
-
-                    logging.debug("Initializing PersistentClient...")
-                    chroma_client = chromadb.PersistentClient(path="./pet_knowledge")
-
-                    logging.debug("Getting collection...")
-                    collection = chroma_client.get_or_create_collection(name="documents")
-
-                    ids = [f"{filename}_{idx}" for idx in range(len(chunks))]
-
-                    logging.debug("Executing DB operation...")
-                    collection.add(
-                        embeddings=embeddings,
-                        documents=chunks,
-                        metadatas=[{"filename": filename} for _ in chunks],
-                        ids=ids
-                    )
-
-                    logging.debug("Deleting collection and client references...")
-                    del collection
-                    del chroma_client
-
-                    logging.debug("Clearing system cache again...")
-                    chromadb.api.client.SharedSystemClient.clear_system_cache()
-                logging.debug("CHROMA_LOCK released.")
-
+                SimpleVectorDB().add(chunks, embeddings, filename)
                 self.extraction_finished.emit(f"I have finished reading {filename}!")
             except Exception as e:
-                self.error_occurred.emit(f"ChromaDB Ingestion Error: {e}")
-                logging.error(f"ChromaDB Ingestion Error: {e}")
+                self.error_occurred.emit(f"Vector DB Ingestion Error: {e}")
+                logging.error(f"Vector DB Ingestion Error: {e}")
         else:
             self.error_occurred.emit(f"Failed to generate any embeddings for {filename}.")
 
