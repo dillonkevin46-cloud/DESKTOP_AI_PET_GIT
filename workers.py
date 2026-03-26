@@ -9,6 +9,7 @@ import json
 import re
 import os
 import chromadb
+import chromadb.api.client
 import pypdf
 import docx
 import pandas as pd
@@ -110,6 +111,7 @@ class AIBrainWorker(QThread):
 
                             if user_embedding:
                                 with CHROMA_LOCK:
+                                    chromadb.api.client.SharedSystemClient.clear_system_cache()
                                     chroma_client = chromadb.PersistentClient(path="./pet_knowledge")
                                     collection = chroma_client.get_or_create_collection(name="documents")
 
@@ -119,7 +121,10 @@ class AIBrainWorker(QThread):
                                         query_embeddings=[user_embedding],
                                         n_results=2
                                     )
+
+                                    del collection
                                     del chroma_client
+                                    chromadb.api.client.SharedSystemClient.clear_system_cache()
 
                                 docs = results.get("documents", [])
                                 if docs and docs[0]:
@@ -288,15 +293,20 @@ class KnowledgeIngestionWorker(QThread):
 
             if valid_chunks:
                 with CHROMA_LOCK:
+                    chromadb.api.client.SharedSystemClient.clear_system_cache()
                     chroma_client = chromadb.PersistentClient(path="./pet_knowledge")
                     collection = chroma_client.get_or_create_collection(name="documents")
+
                     collection.add(
                         embeddings=embeddings,
                         documents=valid_chunks,
                         metadatas=[{"filename": filename} for _ in valid_chunks],
                         ids=ids
                     )
+
+                    del collection
                     del chroma_client
+                    chromadb.api.client.SharedSystemClient.clear_system_cache()
 
                 self.extraction_finished.emit(f"I have finished reading {filename}!")
             else:
