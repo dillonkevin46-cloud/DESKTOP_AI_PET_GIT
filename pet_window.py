@@ -243,8 +243,9 @@ class PetWindow(QWidget):
         self.change_animation_state("idle")
 
     def _on_frame_changed(self):
-        if self.movie.currentPixmap():
-            self.resize(self.movie.currentPixmap().size())
+        pixmap = self.movie.currentPixmap()
+        if pixmap and not pixmap.isNull():
+            self.resize(pixmap.size())
 
     def change_animation_state(self, state_name: str):
         path = self.sprite_paths.get(state_name)
