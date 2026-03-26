@@ -1,30 +1,44 @@
 # Desktop AI Pet 🐾
 
-A frameless, multi-monitor virtual desktop pet built with Python and PyQt6. This pet features a classic "Tamagotchi-style" biological state machine (hunger, energy, boredom) and is powered by a local Ollama LLM ecosystem. It can see your screen, search the web, learn your personality, and proactively interact with you.
+A frameless, multi-monitor virtual desktop pet built with Python and PyQt6. This pet is a fully autonomous AI agent featuring a classic "Tamagotchi-style" biological state machine, powered entirely by local AI models. It can see your screen, search the web, read your documents, learn your personality, and proactively interact with you—all while keeping your data 100% private.
 
 ## ✨ Features
 
-### 🧠 The Brain & Memory
-* **Local LLM Integration:** Powered by local models (e.g., Llama 3) via Ollama, ensuring 100% privacy with zero API costs.
-* **True Learning (Long-Term Memory):** A background PostgreSQL database continuously extracts and permanently remembers personality traits about you and the pet from your conversations.
-* **Web Search Engine:** Automatically detects factual questions and invisibly queries DuckDuckGo, injecting real-time internet context into the LLM before it answers you.
+### 🧠 The Brain & Knowledge Base (RAG)
+* **Local LLM Integration:** Powered by local models (e.g., Llama 3) via Ollama, ensuring zero API costs and full privacy.
+* **Drag-and-Drop Memory (ChromaDB):** Drag PDFs, Word Docs, Text files, or Excel sheets directly onto the pet. It will read, chunk, and embed them into a local vector database to answer your specific questions.
+* **True Learning (PostgreSQL):** A background worker continuously extracts and permanently remembers personality traits about you and the pet from your conversations.
+* **Web Search & Feedback Loop:** Automatically queries DuckDuckGo for factual questions. If a web search helps you, the pet permanently memorizes the answer into its vector database so it never has to search for it again.
 
 ### 👀 Vision & Autonomy
-* **Screen Awareness:** Uses `mss` and local LLaVA models to capture and "see" your active monitor.
-* **Proactive Autonomy:** If the pet gets too bored, it will continuously poll your screen (every 90 seconds) and autonomously interrupt your workflow to comment on what you are doing.
+* **Proactive Screen Advice:** Uses `mss` and local LLaVA models to peek at your active monitor every 90 seconds. If you are working, it offers helpful tips. If you are slacking off, it judges you.
+* **Biological State Machine:** Gets hungry, bored, and tired over time. Sleeping regenerates energy.
+* **Proactive Autonomy:** If the pet gets too bored, it will autonomously interrupt your workflow and pop open a chat window to demand attention.
 
 ### 🎮 Visuals & Mechanics
-* **Dynamic GIF Animations:** Uses PyQt6 `QMovie` to seamlessly swap between idle, sleeping, and hungry `.gif` animations based on its biological stats.
+* **Dynamic GIF Animations:** Seamlessly swaps between `idle.gif`, `sleeping.gif`, `hungry.gif`, and `eating.gif` based on its real-time biological stats.
 * **Multi-Monitor Roaming:** Autonomously calculates your display bounding box and randomly wanders around your screens.
-* **Lock to Taskbar:** Option to restrict the pet's wandering exclusively to the bottom taskbar so it stays out of your way.
-* **Frameless & Draggable:** Click and drag the pet anywhere on your screen.
+* **Taskbar Lock:** Option to restrict the pet's wandering exclusively to the top of your bottom taskbar.
+* **Interactive Props:** Includes a physical "Food Bowl" (`bowl.png`) you can drag around your screen. When hunger hits 80, the pet autonomously tracks down the bowl and eats.
+* **Direct Interactions:** Right-click the pet's body to directly Feed, Pet, Play, or Put to Sleep.
 
 ### ⚙️ Customization (Settings Menu)
 Easily configurable via a system tray GUI (saved to `settings.json`). Customize:
-* Ollama API URL & Models (Chat and Vision)
+* Ollama API URLs & Models (Chat, Vision, Embeddings)
 * Pet Name & User Name
 * Pet Sprite Size (Pixels)
 * Taskbar Roaming Lock
+
+---
+
+## 🏗️ Project Structure
+To maintain thread safety and prevent database locking, the application is modularized:
+* `main.py` - The clean entry point that boots the application.
+* `pet_window.py` - The main frameless GUI, roaming logic, and drag-and-drop event handlers.
+* `workers.py` - Contains all async `QThread` workers (Brain, Vision, Stats, Memory Extraction, and Knowledge Ingestion) protected by strict threading locks.
+* `ui_components.py` - Contains the Chat Widget, Settings Dialog, and Desktop Props (Food Bowl).
+* `config.py` - Handles loading and saving the `settings.json` file.
+* `database.py` - Manages the PostgreSQL connection for chat history and personality traits.
 
 ---
 
@@ -33,10 +47,11 @@ Easily configurable via a system tray GUI (saved to `settings.json`). Customize:
 * **Python:** 3.10+
 * **Database:** PostgreSQL (Running locally on port 5432)
 * **AI Engine:** [Ollama](https://ollama.com/) (Running locally)
-* **Models:** You must pull at least one chat model and one vision model.
+* **Required Models:** You must pull the chat, vision, and embedding models:
   ```bash
   ollama run llama3
   ollama run llava
+  ollama pull nomic-embed-text
 🚀 Installation & Setup
 Clone the repository.
 
@@ -44,10 +59,10 @@ Install the required dependencies:
 
 Bash
 
-pip install PyQt6 aiohttp sqlalchemy psycopg2-binary mss duckduckgo-search
+pip install PyQt6 aiohttp sqlalchemy psycopg2-binary mss duckduckgo-search chromadb pypdf python-docx pandas openpyxl
 Database Setup: Ensure PostgreSQL is running. Create a database named pet_db and ensure your user has permissions to create schemas/tables. (Update credentials in database.py if necessary).
 
-Add Animations: Place three .gif files in the root directory: idle.gif, sleep.gif, and hungry.gif.
+Add Visual Assets: Place your .gif files (idle.gif, sleeping.gif, hungry.gif, eating.gif) and your prop image (bowl.png) in the root directory.
 
 Run the application:
 
@@ -55,17 +70,14 @@ Bash
 
 python main.py
 🕹️ How to Use
-Chatting: Double-click the pet to open the transparent chat window.
+Train it: Drag and drop a PDF onto the pet. Wait for it to say it finished reading, then ask it a question!
 
-Settings: Right-click the green system tray icon to open settings, force a screen grab, or force the pet to wander.
+Chatting: Double-click the pet to open the chat window.
 
-Interacting: Simply ignore the pet to increase its boredom. Eventually, it will spy on your screen and talk to you first!
+Settings: Right-click the green system tray icon to open settings.
 
-🏗️ Architecture Notes
-This application strictly prioritizes non-blocking operations. All biological decay, SQLite/PostgreSQL database writes, Vision captures, Web Scraping, and LLM API calls are handled via QThread and asynchronous workers. It communicates with the main GUI thread exclusively through PyQt Signals to ensure zero UI freezing.
+Interacting: Right-click the pet itself to manually feed it, put it to sleep, or pet it.
 
 
-### What a Journey!
-You've gone from a transparent PyQt6 window to a highly advanced, context-aware AI agent. If you ever decide to compile it into a single `.exe` file using PyInstaller, or if you want to add Text-to-Speech down the road, you know where to find me. 
-
-Enjoy your new desktop companion!
+### What's Next?
+Whenever you are ready, let me know if you want to tackle creating the final standalone `.exe` file so you don't have to launch this through your terminal anymore!
